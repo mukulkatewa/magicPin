@@ -5,21 +5,22 @@ Classifies merchant/customer replies and decides: send / wait / end.
 
 import json
 import os
-from openai import OpenAI
+import boto3
 
-OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-MODEL = "anthropic/claude-3-haiku"
+_bedrock: boto3.client = None
 
-_client: OpenAI | None = None
-
-def _get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        _client = OpenAI(
-            base_url=OPENROUTER_BASE,
-            api_key=os.environ.get("OPENROUTER_API_KEY", ""),
+def _get_client():
+    global _bedrock
+    if _bedrock is None:
+        _bedrock = boto3.client(
+            "bedrock-runtime",
+            region_name=os.environ.get("AWS_REGION", "us-east-1"),
+            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
         )
-    return _client
+    return _bedrock
+
+MODEL = os.environ.get("BEDROCK_NOVA_MODEL_ID", "amazon.nova-lite-v1:0")
 
 
 # Auto-reply fingerprints — common WhatsApp Business canned replies
@@ -35,12 +36,9 @@ _AUTO_REPLY_PHRASES = [
 ]
 
 def _is_auto_reply(message: str, history: list[dict]) -> bool:
-    """Detect WhatsApp Business canned auto-replies."""
     lower = message.lower()
-    # Phrase match
     if any(phrase in lower for phrase in _AUTO_REPLY_PHRASES):
         return True
-    # Repeated verbatim (3+ times)
     recent = [t["msg"] for t in history[-5:] if t.get("from_role") == "merchant"]
     if recent.count(message) >= 2:
         return True
@@ -56,7 +54,6 @@ _INTENT_ACTION   = ["i want to join", "judrna hai", "sign me up", "register", "b
 
 
 def _classify_intent(message: str) -> str:
-    """Returns: positive | negative | action | question | unknown"""
     lower = message.lower()
     if any(p in lower for p in _INTENT_ACTION):
         return "action"
@@ -72,21 +69,21 @@ def _classify_intent(message: str) -> str:
 REPLY_SYSTEM = """You are Vera, magicpin's WhatsApp AI for merchant growth.
 The merchant/customer just replied to your previous message. Decide the next move.
 
-RULES:
-- If they said YES / agreed / want to proceed: deliver the promised artifact or next step immediately. Do NOT ask another qualifying question.
-- If they asked a question: answer it concisely, then re-offer the next step.
-- If they seem unsure: give one concrete reason to act, then a binary YES/STOP.
-- If hostile or clearly uninterested: end gracefully, no pushback.
-- NO preambles, NO re-introduction, NO generic "happy to help".
+Rules:
+- YES / agreed / want to proceed → deliver the promised artifact or next step immediately. Do NOT ask another qualifying question.
+- Question → answer concisely, then re-offer the next step.
+- Unsure → one concrete reason to act, then binary YES/STOP.
+- Hostile or clearly uninterested → end gracefully, no pushback.
+- No preambles, no re-introduction, no generic "happy to help".
 - Match the merchant's language (Hindi-English mix if they used it).
 - Keep body under 80 words.
 
-Return JSON only:
+Return JSON only (no markdown):
 {
   "action": "send" | "wait" | "end",
-  "body": "...",       // required if action=send
-  "cta": "binary|open_ended|none",  // required if action=send
-  "wait_seconds": 0,  // required if action=wait
+  "body": "...",
+  "cta": "binary" | "open_ended" | "none",
+  "wait_seconds": 0,
   "rationale": "..."
 }"""
 
@@ -101,19 +98,10 @@ def reply(
     history: list[dict],
     contexts: dict,
 ) -> dict:
-    """
-    Given a merchant/customer reply and conversation history, decide next action.
-    Returns: {action, body?, cta?, wait_seconds?, rationale}
-    """
-
-    # Auto-reply detection — exit immediately after 1 gentle retry
+    # Auto-reply detection
     if from_role == "merchant" and _is_auto_reply(message, history):
         if turn_number > 2:
-            return {
-                "action": "end",
-                "rationale": "Auto-reply detected — gracefully exiting to avoid burn turns",
-            }
-        # First time: try once more with a direct question
+            return {"action": "end", "rationale": "Auto-reply detected — gracefully exiting"}
         return {
             "action": "send",
             "body": "Lagta hai yeh ek auto-reply hai 🙂 Kya aap ya aapki team ek minute le sakti hai? Quick check hai.",
@@ -121,15 +109,10 @@ def reply(
             "rationale": "Possible auto-reply — one gentle check before exiting",
         }
 
-    # Hard negative / exit signal
     intent = _classify_intent(message)
     if intent == "negative":
-        return {
-            "action": "end",
-            "rationale": "Merchant signaled not interested — exiting gracefully",
-        }
+        return {"action": "end", "rationale": "Merchant signaled not interested — exiting gracefully"}
 
-    # Immediate action intent — don't re-qualify, deliver
     if intent == "action":
         merchant = contexts.get(("merchant", merchant_id), {}).get("payload", {}) if merchant_id else {}
         name = merchant.get("identity", {}).get("owner_first_name", "")
@@ -138,20 +121,14 @@ def reply(
             "action": "send",
             "body": f"{greeting}perfect — let me pull that up for you right now. Give me 2 minutes.",
             "cta": "none",
-            "rationale": "Explicit action intent detected — routing to fulfillment immediately",
+            "rationale": "Explicit action intent — routing to fulfillment immediately",
         }
 
-    # Max turns guard
     if turn_number >= 5:
-        return {
-            "action": "end",
-            "rationale": "Reached 5 turns — closing this thread to avoid over-messaging",
-        }
+        return {"action": "end", "rationale": "Reached 5 turns — closing thread"}
 
-    # All other cases: ask the LLM to generate the right reply
+    # LLM fallback for unknown/positive/question
     client = _get_client()
-
-    # Build recent conversation context
     recent_turns = history[-4:] if len(history) >= 4 else history
     conv_str = "\n".join(
         f"[{t.get('from_role', t.get('from', 'unknown')).upper()}]: {t.get('msg', t.get('body', ''))}"
@@ -171,19 +148,16 @@ TURN: {turn_number} of 5 max
 
 What is Vera's best next move?"""
 
-    response = client.chat.completions.create(
-        model=MODEL,
-        max_tokens=400,
-        temperature=0,
-        messages=[
-            {"role": "system", "content": REPLY_SYSTEM},
-            {"role": "user", "content": user_content},
-        ],
+    response = client.converse(
+        modelId=MODEL,
+        system=[{"text": REPLY_SYSTEM}],
+        messages=[{"role": "user", "content": [{"text": user_content}]}],
+        inferenceConfig={"temperature": 0, "maxTokens": 400},
     )
 
-    raw = response.choices[0].message.content.strip()
+    raw = response["output"]["message"]["content"][0]["text"].strip()
     if raw.startswith("```"):
         lines = raw.split("\n")
         raw = "\n".join(lines[1:-1]) if lines[-1] == "```" else "\n".join(lines[1:])
 
-    return json.loads(raw)
+    return json.loads(raw, object_pairs_hook=dict)

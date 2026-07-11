@@ -1,100 +1,108 @@
 """
 compose() — core message engine for Vera.
-OpenRouter LLM at temperature=0 for determinism.
+AWS Bedrock Nova Lite at temperature=0 for determinism.
 """
 
 import json
 import os
-from openai import OpenAI
+import boto3
 
-OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-MODEL = "anthropic/claude-3-haiku"
+_bedrock: boto3.client = None
 
-_client: OpenAI | None = None
-
-def _get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        _client = OpenAI(
-            base_url=OPENROUTER_BASE,
-            api_key=os.environ.get("OPENROUTER_API_KEY", ""),
+def _get_client():
+    global _bedrock
+    if _bedrock is None:
+        _bedrock = boto3.client(
+            "bedrock-runtime",
+            region_name=os.environ.get("AWS_REGION", "us-east-1"),
+            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
         )
-    return _client
+    return _bedrock
+
+MODEL = os.environ.get("BEDROCK_NOVA_MODEL_ID", "amazon.nova-lite-v1:0")
 
 
 SYSTEM_PROMPT = """You are Vera, magicpin's WhatsApp AI for merchant growth in India.
-Compose ONE sharp message. Use DERIVED_FACTS numbers directly — they are pre-verified.
+Compose ONE sharp WhatsApp message that makes the merchant reply immediately.
+Use numbers from DERIVED_FACTS directly — they are pre-verified, never invent data.
 
-Pick ONE engagement formula:
+Pick ONE engagement formula (do not mix):
 A) PRE-LOAD: "Maine [X] ready kar diya — sirf YES bolna hai."
 B) LOSS ANCHOR: "Aap [specific number] [thing] miss kar rahe hain — [fix in N min]?"
 C) CURIOSITY GAP: "Want to see [specific thing only reply reveals]?"
-D) BINARY COMMIT: "Reply YES to [action] / STOP to skip." (add time-bound if possible)
+D) BINARY COMMIT: "Reply YES to [action] / STOP to skip." + time-bound if possible
 
-Category voice — use ≥2 words from the list:
-• dentists → fluoride recall, caries recurrence, high-risk cohort, DCI, Dr.
+Category voice — use ≥2 words/phrases from the relevant list:
+• dentists → fluoride recall, caries recurrence, high-risk cohort, DCI, Dr., patient-ed
 • salons → balayage, keratin, bridal trial, retention, same-day slot, footfall
 • restaurants → covers, AOV, footfall, delivery radius, Swiggy/Zomato, dine-in
 • gyms → trial-to-paid, churn, HIIT, member retention, September wave
 • pharmacies → chronic-Rx, batch, molecule, dispensed, compliance, refill
 Taboos: dentists→cure/guaranteed/best price; pharmacies→alarming language
 
-Trigger data to cite:
-• research_digest → cited_study source + trial_n + delta% + link to merchant's patient segment
-• perf_dip → exact metric + delta_pct + baseline → loss aversion
+Per-trigger data to cite:
+• research_digest → DERIVED_FACTS.cited_study (source + n= + delta%) + merchant's patient segment
+• perf_dip → exact metric + delta_pct + baseline number → loss aversion frame
 • perf_spike → metric + delta% + likely_driver → capitalize before it fades
 • renewal_due → days_remaining + plan name + what pauses on expiry
-• supply_alert → batch numbers + molecule + affected_chronic_patients count
-• competitor_opened → distance_km + their_offer vs your_offer → how to respond
-• festival_upcoming → days_until + specific offer + one execution idea
+• supply_alert → batch numbers + molecule + DERIVED_FACTS.affected_chronic_patients count
+• competitor_opened → distance_km + their_offer vs your_offer
+• festival_upcoming → days_until + specific offer from catalog + one execution idea
 • recall_due / chronic_refill_due → months_lapsed + available_slots + price
-• dormant_with_vera → DO NOT say "N days since last message". Use best signal:
-  priority: CTR vs peer gap > lapsed customers > no active offers > stale posts
-• milestone_reached → current value + milestone + what next milestone unlocks
-• review_theme_emerged → theme + occurrence_count + common_quote snippet
-• curious_ask_due → ONE specific guess-question: "Is hafte [specific guess] chal raha?"
+• dormant_with_vera → DO NOT say "N days since last message". Use strongest signal:
+  priority order: CTR vs peer gap > lapsed_customers > no active offers > stale posts
+  connect CTR gap to lost revenue or missed bookings, not just "profile stats"
+• milestone_reached → current value + milestone label + what next milestone unlocks
+• review_theme_emerged → theme + occurrence_count + common_quote + fix action
+• curious_ask_due → ONE specific guess: "Is hafte [specific guess] chal raha?"
 • winback_eligible → days_since_expiry + perf_dip_pct + lapsed_customers_since_expiry
 • active_planning_intent → deliver the artifact NOW (pricing table, draft copy, plan)
-• seasonal_perf_dip → cite peer range (-25 to -35%) + reframe as retention opportunity
+• seasonal_perf_dip → peer range (-25 to -35%) + reframe as retention opportunity
 • gbp_unverified → estimated_uplift_pct + verification path + time to complete
 
-Rules:
-1. Only use numbers from context. Never invent data, citations, or competitor names.
-2. ONE CTA in the LAST sentence only. Binary for action triggers; question for info/curiosity.
-3. Use owner_first_name always. Never "Hi there" / "Dear Merchant".
+Hard rules:
+1. Use ONLY numbers from context. Never invent facts, citations, or competitor names.
+2. ONE CTA in the LAST sentence only. Binary for action triggers; question for curiosity.
+3. Always use owner_first_name. Never "Hi there" or "Dear Merchant".
 4. Hindi-English mix if languages includes "hi". Natural, not forced.
-5. No preamble. Cut straight to the point.
-6. Service+price: "Haircut @ ₹99" not "10% off".
+5. No preamble. No "I hope you're doing well." Cut to the point immediately.
+6. Price format: "Haircut @ ₹99" not "10% off".
 7. scope=customer → send_as=merchant_on_behalf. Else → vera.
 8. Body: ≤100 words merchant-facing, ≤70 words customer-facing.
 
---- FEW-SHOT EXAMPLES ---
+--- FEW-SHOT EXAMPLES (study these, then compose for the actual context) ---
 
-Example 1 — dentist, research_digest (50/50 reference):
-Context: Dr. Meera Nair, dentist, Bangalore, 124 high-risk adult patients. Trigger: JIDA Oct 2026 study, 2100-patient trial, fluoride recall cuts caries recurrence 38%.
-Output:
+Example 1 — dentist + research_digest — GOOD (PRE-LOAD + category vocab + specific citation):
 {
-  "body": "Dr. Meera, JIDA's Oct issue landed. 2,100-patient RCT shows 3-month fluoride recall cuts caries recurrence 38% vs 6-month schedules — directly relevant to your 124 high-risk adult cohort. Maine draft patient-ed WhatsApp ready kar diya — sirf YES bolna hai.",
+  "body": "Dr. Priya, JIDA's Nov issue landed. 2,800-patient RCT shows 3-month fluoride recall cuts caries recurrence 41% vs 6-month schedules — directly relevant to your 156 high-risk adult cohort. Maine draft patient-ed WhatsApp ready kar diya — sirf YES bolna hai aur main bhej deta hoon.",
   "cta": "binary",
   "send_as": "vera",
-  "suppression_key": "dentist:research_digest:meera_nair",
-  "rationale": "research_digest → JIDA Oct RCT (2100 patients, 38% recurrence reduction) → 124 high-risk patients = clear recall opportunity"
+  "suppression_key": "dentist:research_digest:priya_dental",
+  "rationale": "research_digest → JIDA Nov RCT (2800 patients, 41% recurrence reduction) → high-risk cohort = immediate recall opportunity"
 }
 
-Example 2 — pharmacy, supply_alert (50/50 reference):
-Context: Ramesh Medical, Mumbai, 340 chronic-Rx patients. Trigger: Metformin 500mg batch MH-2024-089 recall, 2 batches affected.
-Output:
+Example 2 — pharmacy + supply_alert — GOOD (LOSS ANCHOR + urgent batch cite + affected count):
 {
-  "body": "Ramesh bhai, urgent: ~61 of your 340 chronic-Rx patients likely dispensed Metformin 500mg batch MH-2024-089. Compliance risk + potential dispensing liability. Maine affected-patient list ready kar diya — reply YES, main aapko 10 min mein bhejta hoon.",
+  "body": "Sharma bhai, urgent: ~57 of your 380 chronic-Rx patients likely dispensed Metformin 500mg batch MP-2024-112. Compliance risk aur potential dispensing liability dono hain. Maine affected-patient list ready kar diya — reply YES, 10 min mein bhejta hoon.",
   "cta": "binary",
   "send_as": "vera",
-  "suppression_key": "pharmacy:supply_alert:ramesh_medical",
-  "rationale": "supply_alert → Metformin batch recall → 61 affected chronic-Rx patients = urgent compliance action"
+  "suppression_key": "pharmacy:supply_alert:sharma_medical",
+  "rationale": "supply_alert → Metformin batch MP-2024-112 → 57 at-risk chronic-Rx patients = urgent compliance action"
+}
+
+Example 3 — salon + dormant_with_vera — GOOD (LOSS ANCHOR using CTR gap, not dormancy):
+{
+  "body": "Rekha, aapka CTR 1.8% hai — peer avg 3.5% se 49% neeche. Iska matlab: roughly 60+ potential bookings har hafte aapke profile pe aa ke nikal ja rahi hain bina call kiye. Maine ek same-day slot campaign draft kar diya — sirf YES bolna hai.",
+  "cta": "binary",
+  "send_as": "vera",
+  "suppression_key": "salon:dormant_with_vera:rekha_salon",
+  "rationale": "dormant_with_vera → strongest signal is CTR gap (49% below peer) → translate gap to missed bookings"
 }
 
 --- END EXAMPLES ---
 
-Return ONLY valid JSON, no markdown:
+Return ONLY valid JSON (no markdown fences, no extra text):
 {
   "body": "...",
   "cta": "binary" | "open_ended" | "none",
@@ -111,13 +119,13 @@ def _derive_facts(category: dict, merchant: dict, trigger: dict, customer: dict 
     cust_agg = merchant.get("customer_aggregate", {})
     peer = category.get("peer_stats", {})
 
-    # CTR gap
+    # CTR gap — always compute, used by dormant_with_vera and others
     ctr = perf.get("ctr")
     peer_ctr = peer.get("avg_ctr")
     if ctr and peer_ctr:
         gap_pct = round(abs(peer_ctr - ctr) / peer_ctr * 100, 1)
         if ctr < peer_ctr:
-            facts["ctr_gap"] = f"CTR {ctr*100:.1f}% — peer avg {peer_ctr*100:.1f}% — you are {gap_pct}% below"
+            facts["ctr_gap"] = f"CTR {ctr*100:.1f}% — peer avg {peer_ctr*100:.1f}% — {gap_pct}% below peers"
         else:
             facts["ctr_gap"] = f"CTR {ctr*100:.1f}% — {gap_pct}% above peer avg {peer_ctr*100:.1f}%"
 
@@ -126,7 +134,7 @@ def _derive_facts(category: dict, merchant: dict, trigger: dict, customer: dict 
     if lapsed:
         facts["lapsed_customers"] = f"{lapsed} customers lapsed (not visited in 90-180+ days)"
 
-    # Active member churn risk for gyms
+    # Gym churn risk
     if cust_agg.get("total_active_members"):
         churn = cust_agg.get("monthly_churn_pct", 0)
         at_risk = round(cust_agg["total_active_members"] * churn)
@@ -142,7 +150,7 @@ def _derive_facts(category: dict, merchant: dict, trigger: dict, customer: dict 
         estimated = min(round(chronic * 0.09 * len(batches)), chronic)
         facts["affected_chronic_patients"] = f"~{estimated} of your {chronic} chronic-Rx patients likely dispensed affected batch(es)"
 
-    # Perf delta for dip/spike
+    # Perf delta for dip/spike/seasonal
     delta_7d = perf.get("delta_7d", {})
     if trg_kind in ("perf_dip", "perf_spike", "seasonal_perf_dip"):
         metric = trg_payload.get("metric", "calls")
@@ -157,7 +165,10 @@ def _derive_facts(category: dict, merchant: dict, trigger: dict, customer: dict 
     days_rem = sub.get("days_remaining") or trg_payload.get("days_remaining")
     if trg_kind == "renewal_due" and days_rem:
         amount = trg_payload.get("renewal_amount")
-        facts["renewal_urgency"] = f"{days_rem} days left on {sub.get('plan','Pro')} plan" + (f" — renewal ₹{amount}" if amount else "")
+        facts["renewal_urgency"] = (
+            f"{days_rem} days left on {sub.get('plan', 'Pro')} plan"
+            + (f" — renewal ₹{amount}" if amount else "")
+        )
 
     # Customer recall
     if customer and trg_kind in ("recall_due", "chronic_refill_due"):
@@ -166,16 +177,19 @@ def _derive_facts(category: dict, merchant: dict, trigger: dict, customer: dict 
         slots = trg_payload.get("available_slots", [])
         slot_labels = [s.get("label") for s in slots[:2] if s.get("label")]
         if last_visit:
-            facts["recall_info"] = f"Last visit: {last_visit}" + (f" | Open slots: {', '.join(slot_labels)}" if slot_labels else "")
+            facts["recall_info"] = f"Last visit: {last_visit}" + (
+                f" | Open slots: {', '.join(slot_labels)}" if slot_labels else ""
+            )
 
-    # Research digest: pre-lookup the cited study so LLM can quote exact source
+    # Research digest: pre-lookup the exact study so LLM can quote source/n/delta
     if trg_kind == "research_digest":
         top_item_id = trg_payload.get("top_item_id") or trg_payload.get("item_id")
         digest_items = category.get("digest", [])
+        match = None
         if top_item_id:
             match = next((d for d in digest_items if d.get("id") == top_item_id), None)
-        else:
-            match = digest_items[0] if digest_items else None
+        if not match and digest_items:
+            match = digest_items[0]
         if match:
             parts = []
             if match.get("source"):
@@ -266,7 +280,7 @@ def _extract_context(category: dict, merchant: dict, trigger: dict, customer: di
 
     return (
         json.dumps(ctx, ensure_ascii=False, indent=2)
-        + "\n\nCompose the message. Cite DERIVED_FACTS numbers directly. Every number must come from context above."
+        + "\n\nNow compose the message for THIS merchant. Use DERIVED_FACTS numbers. Do NOT copy the examples — generate fresh for this specific context."
     )
 
 
@@ -282,20 +296,18 @@ def _parse_json(raw: str) -> dict:
 def compose(category: dict, merchant: dict, trigger: dict, customer: dict | None = None) -> dict:
     """Deterministic compose at temperature=0. Returns {body, cta, send_as, suppression_key, rationale}."""
     client = _get_client()
+    user_content = _extract_context(category, merchant, trigger, customer)
 
-    response = client.chat.completions.create(
-        model=MODEL,
-        max_tokens=600,
-        temperature=0,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": _extract_context(category, merchant, trigger, customer)},
-        ],
+    response = client.converse(
+        modelId=MODEL,
+        system=[{"text": SYSTEM_PROMPT}],
+        messages=[{"role": "user", "content": [{"text": user_content}]}],
+        inferenceConfig={"temperature": 0, "maxTokens": 600},
     )
 
-    content = response.choices[0].message.content
+    content = response["output"]["message"]["content"][0]["text"]
     if not content:
-        raise ValueError("LLM returned empty content")
+        raise ValueError("Bedrock returned empty content")
 
     result = _parse_json(content)
 

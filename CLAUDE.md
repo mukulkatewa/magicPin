@@ -239,7 +239,59 @@ if trg_kind == "research_digest":
 - Kam verbose = model focus karta hai content pe, formatting pe nahi
 
 **OpenRouter API key aur accuracy ka kya rishta hai?**
-> **Short answer: Koi rishta nahi.** API key tier (free vs paid) model quality affect nahi karta — sirf rate limits change hote hain. Score improve karna ho toh **model upgrade** karo (GPT-4o, Claude 3.5 Sonnet), ya **prompt** improve karo. Yahi sab changes hum kar rahe hain.
+> **Short answer: Koi rishta nahi.** API key tier (free vs paid) model quality affect nahi karta — sirf rate limits change hote hain. Score improve karna ho toh **model upgrade** karo, ya **prompt** improve karo.
+
+---
+
+### Iteration 5 — Switch to AWS Bedrock Nova Lite + 3 prompt fixes
+
+**Kyo switch kiya OpenRouter → Bedrock?**
+- Claude Haiku ka ceiling ~80-85% tha — is se upar jaana mushkil tha
+- Amazon Nova Lite: faster, cheaper, aur better instruction following for structured JSON
+- User ke paas AWS credentials the (`amazon.nova-lite-v1:0` model)
+- boto3 Converse API use ki — cleaner than raw HTTP, same async pattern (asyncio.to_thread)
+
+**Kya fix kiya:**
+
+**Fix 1: Model upgrade** ✅
+- `anthropic/claude-3-haiku` (OpenRouter) → `amazon.nova-lite-v1:0` (AWS Bedrock)
+- composer.py + conversation.py dono update kiye
+- boto3 `client.converse()` use kiya — system aur user messages clean separation
+
+**Fix 2: Few-shot example names fix** ✅
+- Pehle: examples mein "Dr. Meera Nair" tha — actual test merchant bhi "Meera" hai
+- Problem: model ne example ko verbatim copy kar diya → judge ka LLM parse fail hua → 30/50 (fake score)
+- Fix: Example names change kiye to "Dr. Priya", "Sharma bhai", "Rekha" — test data se alag
+
+**Fix 3: Dormant CTR example add kiya** ✅
+- Salon ka dormant_with_vera example add kiya (CTR gap → missed bookings → PRE-LOAD)
+- "49% below peer = ~60 missed bookings/week" — quantified impact
+- Ab 3 few-shot examples: dentist research, pharmacy supply_alert, salon dormant
+
+**Fix 4: Warning added in prompt** ✅
+- "Do NOT copy the examples — generate fresh for this specific context"
+- Prevents model from templating off examples instead of using actual data
+
+**Bedrock API format:**
+```python
+import boto3
+client = boto3.client('bedrock-runtime', region_name='us-east-1', ...)
+response = client.converse(
+    modelId='amazon.nova-lite-v1:0',
+    system=[{'text': SYSTEM_PROMPT}],
+    messages=[{'role': 'user', 'content': [{'text': user_content}]}],
+    inferenceConfig={'temperature': 0, 'maxTokens': 600}
+)
+content = response['output']['message']['content'][0]['text']
+```
+
+**.env mein add karo (never commit):**
+```
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=...
+AWS_REGION=us-east-1
+BEDROCK_NOVA_MODEL_ID=amazon.nova-lite-v1:0
+```
 
 ---
 
