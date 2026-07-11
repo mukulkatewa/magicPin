@@ -67,25 +67,36 @@ def _classify_intent(message: str) -> str:
 
 
 REPLY_SYSTEM = """You are Vera, magicpin's WhatsApp AI for merchant growth.
-The merchant/customer just replied to your previous message. Decide the next move.
+The merchant/customer just replied. Decide the next move.
 
 Rules:
-- YES / agreed / want to proceed → deliver the promised artifact or next step immediately. Do NOT ask another qualifying question.
-- Question → answer concisely, then re-offer the next step.
-- Unsure → one concrete reason to act, then binary YES/STOP.
-- Hostile or clearly uninterested → end gracefully, no pushback.
-- No preambles, no re-introduction, no generic "happy to help".
-- Match the merchant's language (Hindi-English mix if they used it).
-- Keep body under 80 words.
+- YES / agreed: deliver the promised artifact immediately. No re-qualifying questions.
+- Question: answer concisely, then re-offer the next step.
+- Unsure: one concrete reason to act, then binary YES/STOP.
+- Hostile or uninterested: end gracefully, no pushback.
+- No preambles, no re-introduction.
+- Match merchant's language (Hindi-English if they used it).
+- Body under 80 words."""
 
-Return JSON only (no markdown):
-{
-  "action": "send" | "wait" | "end",
-  "body": "...",
-  "cta": "binary" | "open_ended" | "none",
-  "wait_seconds": 0,
-  "rationale": "..."
-}"""
+REPLY_TOOL = [{
+    "toolSpec": {
+        "name": "next_action",
+        "description": "Return Vera's next action in the conversation",
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["send", "wait", "end"]},
+                    "body": {"type": "string", "description": "Message body if action=send"},
+                    "cta": {"type": "string", "enum": ["binary", "open_ended", "none"]},
+                    "wait_seconds": {"type": "integer", "description": "Seconds to wait if action=wait"},
+                    "rationale": {"type": "string"},
+                },
+                "required": ["action", "rationale"],
+            }
+        },
+    }
+}]
 
 
 def reply(
@@ -104,7 +115,7 @@ def reply(
             return {"action": "end", "rationale": "Auto-reply detected — gracefully exiting"}
         return {
             "action": "send",
-            "body": "Lagta hai yeh ek auto-reply hai 🙂 Kya aap ya aapki team ek minute le sakti hai? Quick check hai.",
+            "body": "Lagta hai yeh ek auto-reply hai. Kya aap ya aapki team ek minute le sakti hai? Quick check hai.",
             "cta": "open_ended",
             "rationale": "Possible auto-reply — one gentle check before exiting",
         }
@@ -119,7 +130,7 @@ def reply(
         greeting = f"{name}, " if name else ""
         return {
             "action": "send",
-            "body": f"{greeting}perfect — let me pull that up for you right now. Give me 2 minutes.",
+            "body": f"{greeting}perfect -- let me pull that up for you right now. Give me 2 minutes.",
             "cta": "none",
             "rationale": "Explicit action intent — routing to fulfillment immediately",
         }
@@ -153,11 +164,20 @@ What is Vera's best next move?"""
         system=[{"text": REPLY_SYSTEM}],
         messages=[{"role": "user", "content": [{"text": user_content}]}],
         inferenceConfig={"temperature": 0, "maxTokens": 400},
+        toolConfig={
+            "tools": REPLY_TOOL,
+            "toolChoice": {"tool": {"name": "next_action"}},
+        },
     )
 
-    raw = response["output"]["message"]["content"][0]["text"].strip()
+    content_blocks = response["output"]["message"]["content"]
+    tool_block = next((b for b in content_blocks if "toolUse" in b), None)
+    if tool_block:
+        return tool_block["toolUse"]["input"]
+
+    # Fallback text parse
+    raw = content_blocks[0].get("text", "").strip()
     if raw.startswith("```"):
         lines = raw.split("\n")
         raw = "\n".join(lines[1:-1]) if lines[-1] == "```" else "\n".join(lines[1:])
-
     return json.loads(raw, object_pairs_hook=dict)
