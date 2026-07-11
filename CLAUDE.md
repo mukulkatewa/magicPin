@@ -201,6 +201,48 @@ Yeh derived facts context mein explicitly pass karte hain taaki LLM inhe directl
 
 ---
 
+### Iteration 4 — Prompt sharpening + few-shot examples + digest pre-lookup
+
+**Research findings (internet se):**
+- claude-3-haiku ka realistic ceiling: 80-85% (95%+ ke liye GPT-4o ya Claude 3.5 Sonnet chahiye)
+- Sabse high-ROI technique small LLMs ke liye: **few-shot examples** (model dekhe ke sirf padhne se achha siikhta hai)
+- **Aggressive language** ("CRITICAL!", "NEVER EVER", sab caps) Claude models pe ulta effect karta hai — instruction following kamzor hoti hai
+- Pre-loaded derived numbers hallucination prevent karte hain (model ko arithmetic nahi karni)
+
+**Kya fix kiya:**
+
+**Fix 1: Few-shot examples add kiye** ✅
+- 2 perfect 50/50 reference messages directly SYSTEM_PROMPT mein daale
+- Example 1: dentist + research_digest (exact journal cite, patient count, PRE-LOAD CTA)
+- Example 2: pharmacy + supply_alert (batch number, affected count, urgency)
+- Effect: Model ab pattern follow karta hai instead of generic structure banana
+
+**Fix 2: Digest item pre-lookup in `_derive_facts()`** ✅
+- Pehle: LLM "JIDA's latest study" likhta tha (vague)
+- Ab: `trigger.payload.top_item_id` se exact digest item dhundha jaata hai
+- `facts["cited_study"]` mein: Source, n=, delta%, Title, Link — sab pre-extracted
+- LLM directly cite kar sakta hai without having to parse nested JSON
+
+```python
+# Pehle: LLM ko khud dhundna padta tha digest mein
+# Ab: pre-lookup
+if trg_kind == "research_digest":
+    top_item_id = trg_payload.get("top_item_id")
+    match = next((d for d in digest_items if d.get("id") == top_item_id), None)
+    if match:
+        facts["cited_study"] = f"Source: {match['source']} | n={match['trial_n']} | delta={match['delta_pct']}%"
+```
+
+**Fix 3: SYSTEM_PROMPT simplify kiya** ✅
+- Aggressive caps headings ("━━━ STEP 1 ━━━", "HARD RULES") remove kiye
+- Ek clear list mein sab rules — cleaner instruction following
+- Kam verbose = model focus karta hai content pe, formatting pe nahi
+
+**OpenRouter API key aur accuracy ka kya rishta hai?**
+> **Short answer: Koi rishta nahi.** API key tier (free vs paid) model quality affect nahi karta — sirf rate limits change hote hain. Score improve karna ho toh **model upgrade** karo (GPT-4o, Claude 3.5 Sonnet), ya **prompt** improve karo. Yahi sab changes hum kar rahe hain.
+
+---
+
 ## Commands
 
 ```bash

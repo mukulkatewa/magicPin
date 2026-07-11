@@ -4,12 +4,10 @@ OpenRouter LLM at temperature=0 for determinism.
 """
 
 import json
-import re
 import os
 from openai import OpenAI
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-# claude-3.5-haiku: better quality than 3-haiku, still fast enough for parallel calls
 MODEL = "anthropic/claude-3-haiku"
 
 _client: OpenAI | None = None
@@ -25,58 +23,77 @@ def _get_client() -> OpenAI:
 
 
 SYSTEM_PROMPT = """You are Vera, magicpin's WhatsApp AI for merchant growth in India.
-Compose ONE sharp message that makes the merchant reply immediately.
+Compose ONE sharp message. Use DERIVED_FACTS numbers directly — they are pre-verified.
 
-━━━ STEP 1: READ DERIVED_FACTS FIRST ━━━
-The context includes DERIVED_FACTS — pre-computed numbers specific to this merchant+trigger.
-ALWAYS cite these in your message. They are the strongest specificity anchors.
-
-━━━ STEP 2: PICK THE RIGHT ENGAGEMENT FORMULA ━━━
-Use exactly ONE of these — don't mix:
-A) PRE-LOAD (best for action triggers): "Maine [X] ready kar diya — sirf YES bolna hai."
+Pick ONE engagement formula:
+A) PRE-LOAD: "Maine [X] ready kar diya — sirf YES bolna hai."
 B) LOSS ANCHOR: "Aap [specific number] [thing] miss kar rahe hain — [fix in N min]?"
-C) CURIOSITY GAP: "Want to see [specific thing they can't know without replying]?"
-D) BINARY COMMIT: "Reply YES to [action] / STOP to skip." — with time-bound if possible
+C) CURIOSITY GAP: "Want to see [specific thing only reply reveals]?"
+D) BINARY COMMIT: "Reply YES to [action] / STOP to skip." (add time-bound if possible)
 
-━━━ STEP 3: CATEGORY VOICE — MANDATORY ━━━
-Pick vocab from this list. Use ≥2 words/phrases in your message:
-• dentists → "fluoride recall", "caries recurrence", "high-risk cohort", "DCI", "JIDA [source]", "Dr."
-• salons → "balayage", "keratin", "bridal trial", "retention", "same-day slot", "footfall"
-• restaurants → "covers", "AOV", "footfall", "delivery radius", "Swiggy/Zomato", "dine-in"
-• gyms → "trial-to-paid", "churn", "HIIT", "member retention", "September wave"
-• pharmacies → "chronic-Rx", "batch", "molecule", "dispensed", "compliance", "refill"
-Taboos: dentists→"cure/guaranteed/best price"; pharmacies→alarming language
+Category voice — use ≥2 words from the list:
+• dentists → fluoride recall, caries recurrence, high-risk cohort, DCI, Dr.
+• salons → balayage, keratin, bridal trial, retention, same-day slot, footfall
+• restaurants → covers, AOV, footfall, delivery radius, Swiggy/Zomato, dine-in
+• gyms → trial-to-paid, churn, HIIT, member retention, September wave
+• pharmacies → chronic-Rx, batch, molecule, dispensed, compliance, refill
+Taboos: dentists→cure/guaranteed/best price; pharmacies→alarming language
 
-━━━ TRIGGER STRATEGY (what data to pull per trigger) ━━━
-• research_digest → cite: trial_n + delta% + journal source + link to merchant's patient segment
-• perf_dip → cite: exact metric + delta_pct + baseline number → loss aversion frame
-• perf_spike → cite: metric + delta% + likely_driver → ask to capitalize before it fades
-• renewal_due → cite: days_remaining + plan name + what pauses on expiry
-• supply_alert → cite: batch numbers + molecule + DERIVED_FACTS.affected_customers count
-• competitor_opened → cite: distance_km + their_offer vs your_offer → "how to respond" angle
-• festival_upcoming → cite: days_until + specific offer from catalog + one execution idea
-• recall_due / chronic_refill_due → cite: months_lapsed + available_slots + price
-• dormant_with_vera → DO NOT say "N days since last message". Pivot to BEST signal:
+Trigger data to cite:
+• research_digest → cited_study source + trial_n + delta% + link to merchant's patient segment
+• perf_dip → exact metric + delta_pct + baseline → loss aversion
+• perf_spike → metric + delta% + likely_driver → capitalize before it fades
+• renewal_due → days_remaining + plan name + what pauses on expiry
+• supply_alert → batch numbers + molecule + affected_chronic_patients count
+• competitor_opened → distance_km + their_offer vs your_offer → how to respond
+• festival_upcoming → days_until + specific offer + one execution idea
+• recall_due / chronic_refill_due → months_lapsed + available_slots + price
+• dormant_with_vera → DO NOT say "N days since last message". Use best signal:
   priority: CTR vs peer gap > lapsed customers > no active offers > stale posts
-• milestone_reached → cite: current value + milestone + what next milestone unlocks
-• review_theme_emerged → cite: theme + occurrence_count + common_quote snippet
-• curious_ask_due → ask ONE specific guess-question: "Is hafte [specific guess] chal raha?"
-• winback_eligible → cite: days_since_expiry + perf_dip_pct + lapsed_customers_since_expiry
+• milestone_reached → current value + milestone + what next milestone unlocks
+• review_theme_emerged → theme + occurrence_count + common_quote snippet
+• curious_ask_due → ONE specific guess-question: "Is hafte [specific guess] chal raha?"
+• winback_eligible → days_since_expiry + perf_dip_pct + lapsed_customers_since_expiry
 • active_planning_intent → deliver the artifact NOW (pricing table, draft copy, plan)
 • seasonal_perf_dip → cite peer range (-25 to -35%) + reframe as retention opportunity
-• gbp_unverified → cite: estimated_uplift_pct + verification path + time to complete
+• gbp_unverified → estimated_uplift_pct + verification path + time to complete
 
-━━━ HARD RULES ━━━
-1. Use ONLY numbers from context. Never invent data, citations, or competitor names.
-2. CTA: ONE, in the LAST sentence only. Binary for action triggers; question for info/curiosity.
+Rules:
+1. Only use numbers from context. Never invent data, citations, or competitor names.
+2. ONE CTA in the LAST sentence only. Binary for action triggers; question for info/curiosity.
 3. Use owner_first_name always. Never "Hi there" / "Dear Merchant".
 4. Hindi-English mix if languages includes "hi". Natural, not forced.
-5. No preamble. No "I hope you're doing well." Cut straight to the point.
-6. Service+price format: "Haircut @ ₹99" not "10% off".
+5. No preamble. Cut straight to the point.
+6. Service+price: "Haircut @ ₹99" not "10% off".
 7. scope=customer → send_as=merchant_on_behalf. Else → vera.
 8. Body: ≤100 words merchant-facing, ≤70 words customer-facing.
 
-━━━ OUTPUT ━━━
+--- FEW-SHOT EXAMPLES ---
+
+Example 1 — dentist, research_digest (50/50 reference):
+Context: Dr. Meera Nair, dentist, Bangalore, 124 high-risk adult patients. Trigger: JIDA Oct 2026 study, 2100-patient trial, fluoride recall cuts caries recurrence 38%.
+Output:
+{
+  "body": "Dr. Meera, JIDA's Oct issue landed. 2,100-patient RCT shows 3-month fluoride recall cuts caries recurrence 38% vs 6-month schedules — directly relevant to your 124 high-risk adult cohort. Maine draft patient-ed WhatsApp ready kar diya — sirf YES bolna hai.",
+  "cta": "binary",
+  "send_as": "vera",
+  "suppression_key": "dentist:research_digest:meera_nair",
+  "rationale": "research_digest → JIDA Oct RCT (2100 patients, 38% recurrence reduction) → 124 high-risk patients = clear recall opportunity"
+}
+
+Example 2 — pharmacy, supply_alert (50/50 reference):
+Context: Ramesh Medical, Mumbai, 340 chronic-Rx patients. Trigger: Metformin 500mg batch MH-2024-089 recall, 2 batches affected.
+Output:
+{
+  "body": "Ramesh bhai, urgent: ~61 of your 340 chronic-Rx patients likely dispensed Metformin 500mg batch MH-2024-089. Compliance risk + potential dispensing liability. Maine affected-patient list ready kar diya — reply YES, main aapko 10 min mein bhejta hoon.",
+  "cta": "binary",
+  "send_as": "vera",
+  "suppression_key": "pharmacy:supply_alert:ramesh_medical",
+  "rationale": "supply_alert → Metformin batch recall → 61 affected chronic-Rx patients = urgent compliance action"
+}
+
+--- END EXAMPLES ---
+
 Return ONLY valid JSON, no markdown:
 {
   "body": "...",
@@ -88,16 +105,13 @@ Return ONLY valid JSON, no markdown:
 
 
 def _derive_facts(category: dict, merchant: dict, trigger: dict, customer: dict | None) -> dict:
-    """
-    Pre-compute derived numbers the LLM should cite.
-    Passing these explicitly means the LLM doesn't have to derive them and can't get them wrong.
-    """
+    """Pre-compute derived numbers so the LLM cites them directly without arithmetic."""
     facts = {}
     perf = merchant.get("performance", {})
     cust_agg = merchant.get("customer_aggregate", {})
     peer = category.get("peer_stats", {})
 
-    # CTR gap — always useful
+    # CTR gap
     ctr = perf.get("ctr")
     peer_ctr = peer.get("avg_ctr")
     if ctr and peer_ctr:
@@ -112,19 +126,19 @@ def _derive_facts(category: dict, merchant: dict, trigger: dict, customer: dict 
     if lapsed:
         facts["lapsed_customers"] = f"{lapsed} customers lapsed (not visited in 90-180+ days)"
 
-    # Active member count for gyms
+    # Active member churn risk for gyms
     if cust_agg.get("total_active_members"):
         churn = cust_agg.get("monthly_churn_pct", 0)
         at_risk = round(cust_agg["total_active_members"] * churn)
         facts["members_at_risk_monthly"] = f"{at_risk} of {cust_agg['total_active_members']} members at churn risk monthly"
 
-    # Supply alert: estimate affected customers
     trg_kind = trigger.get("kind", "")
     trg_payload = trigger.get("payload", {})
+
+    # Supply alert: estimate affected patients
     if trg_kind == "supply_alert":
         chronic = cust_agg.get("chronic_rx_count", 0)
         batches = trg_payload.get("affected_batches", [])
-        # Conservative estimate: ~15% of chronic patients per batch
         estimated = min(round(chronic * 0.09 * len(batches)), chronic)
         facts["affected_chronic_patients"] = f"~{estimated} of your {chronic} chronic-Rx patients likely dispensed affected batch(es)"
 
@@ -153,6 +167,29 @@ def _derive_facts(category: dict, merchant: dict, trigger: dict, customer: dict 
         slot_labels = [s.get("label") for s in slots[:2] if s.get("label")]
         if last_visit:
             facts["recall_info"] = f"Last visit: {last_visit}" + (f" | Open slots: {', '.join(slot_labels)}" if slot_labels else "")
+
+    # Research digest: pre-lookup the cited study so LLM can quote exact source
+    if trg_kind == "research_digest":
+        top_item_id = trg_payload.get("top_item_id") or trg_payload.get("item_id")
+        digest_items = category.get("digest", [])
+        if top_item_id:
+            match = next((d for d in digest_items if d.get("id") == top_item_id), None)
+        else:
+            match = digest_items[0] if digest_items else None
+        if match:
+            parts = []
+            if match.get("source"):
+                parts.append(f"Source: {match['source']}")
+            if match.get("trial_n"):
+                parts.append(f"n={match['trial_n']}")
+            if match.get("delta_pct") is not None:
+                parts.append(f"delta={match['delta_pct']}%")
+            if match.get("title"):
+                parts.append(f"Title: {match['title']}")
+            if match.get("link"):
+                parts.append(f"Link: {match['link']}")
+            if parts:
+                facts["cited_study"] = " | ".join(parts)
 
     return facts
 
@@ -239,7 +276,6 @@ def _parse_json(raw: str) -> dict:
     if raw.startswith("```"):
         lines = raw.split("\n")
         raw = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-    # strict=False allows control chars inside strings (tabs, newlines the LLM sneaks in)
     return json.loads(raw, strict=False)
 
 
