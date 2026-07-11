@@ -599,6 +599,51 @@ run and 43 another (temperature=0.2 noise). The judge itself becomes the ceiling
 
 ---
 
+### Iteration 12 — Provider split: Bedrock for bot, OpenRouter for judge
+
+**Cold analysis of iter 11:**
+- Bot Nova Pro + judge Nova Pro on SAME AWS account = still throttled
+- 8 of 14 messages scored, 2 batches timed out
+- Real avg from scored 8: 314/8 = 39.25/50 = 78.5%
+- The best individual message: Dr Bharat perf_dip 43/50 = 86% (proof the bot IS producing quality)
+
+**Interview truth about the ceiling:**
+
+11 iterations, 6 different provider combinations, 30+ prompt versions.
+The scores oscillate 74-80% displayed. This is NOT because the bot is bad --
+it is because two different bottlenecks compound:
+
+1. **Provider contention** (fixed here): bot and judge on same AWS account
+   fight for rate quota -> throttles / timeouts / partial runs
+2. **Judge stochasticity** (permanent): any single-LLM judge at temp > 0
+   scores the same message 38 in one run and 43 in another. On a 14-message
+   run this is +/- 3-5 pts of pure noise on the total.
+
+Realistic ceiling for a genuinely excellent bot vs a strict LLM judge: 85-90%.
+Anything above that requires either (a) a stricter but cache-hitting deterministic
+judge, or (b) game-theory the exact phrase patterns THIS judge rewards -- which
+would not generalise to magicpin's real judge.
+
+**Iter 12 fix:**
+
+**Split providers so bot and judge never compete for the same quota:**
+- Bot: Bedrock Nova Pro (composer.py + conversation.py) -- best output quality
+- Judge: OpenRouter gpt-4o-mini (judge_simulator.py) -- fast, cheap, no JSON escape bug
+- Semaphore bumped 2 -> 4 (no more contention concern)
+- Adaptive retry stays on for burst safety
+
+Expected: 14/14 messages scored every run (no timeouts). Real average 82-86%.
+Judge noise still causes 3-5 pt swings run-to-run.
+
+**Interview one-liner explanation:**
+
+> "We split the LLM providers on purpose. The bot runs on AWS Bedrock Nova Pro
+> for best composition quality. The judge runs on OpenRouter (GPT-4o-mini) so
+> the two never share a rate quota. Under load they were throttling each other
+> and losing messages to timeouts, which was masking real bot quality."
+
+---
+
 ## Commands
 
 ```bash

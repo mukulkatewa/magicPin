@@ -24,15 +24,16 @@ Author: magicpin AI Challenge Team
 BOT_URL = "http://localhost:8080"
 
 # Choose your LLM provider: "openai", "anthropic", "gemini", "deepseek", "groq", "ollama", "openrouter", "bedrock"
-LLM_PROVIDER = "bedrock"
+# Judge uses OpenRouter (different provider from bot's Bedrock) so they do NOT compete
+# for the same rate quota. Prevents ThrottlingException / tick timeouts.
+LLM_PROVIDER = "openrouter"
 
-# Your API key (openrouter key). For "bedrock" provider we read AWS keys from .env instead.
+# Your API key (openrouter key from .env). For "bedrock" provider we read AWS keys instead.
 LLM_API_KEY = ""
 
-# Model to use. For "bedrock" provider this is the Bedrock model ID.
-# We use Nova Pro for the judge -- reliable JSON output, no Haiku-style escape bugs.
-# NOTE: this only affects LOCAL scoring. magicpin's real judge uses their own model.
-LLM_MODEL = "amazon.nova-pro-v1:0"
+# gpt-4o-mini: cheap, no JSON escape bug (unlike Haiku), consistent scoring.
+# Judge model choice affects ONLY local scoring signal -- magicpin's real judge uses their own.
+LLM_MODEL = "openai/gpt-4o-mini"
 
 # For Ollama only: local server URL
 OLLAMA_URL = "http://localhost:11434"
