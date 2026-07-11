@@ -30,7 +30,7 @@ LLM_PROVIDER = "openrouter"
 LLM_API_KEY = ""  # set OPENROUTER_API_KEY in .env or paste here
 
 # Model to use (leave empty for default, or specify like "gpt-4o", "claude-3-5-sonnet-20241022", etc.)
-LLM_MODEL = "anthropic/claude-3-haiku"  # fast + cheap on OpenRouter
+LLM_MODEL = ""  # leave empty — OpenRouter picks default for the provider
 
 # For Ollama only: local server URL
 OLLAMA_URL = "http://localhost:11434"

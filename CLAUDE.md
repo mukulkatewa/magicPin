@@ -1,154 +1,193 @@
 # Vera Engine — magicpin AI Challenge
+> **Interview reference** — yeh file har iteration ke baad update hoti hai. Isme problem, approach aur fixes simple language mein likhe hain.
 
-## What is this project asking?
+---
 
-magicpin has ~100k merchant partners (restaurants, salons, dentists, gyms, pharmacies). They run **Vera**, a WhatsApp AI assistant that messages merchants daily to help them grow — improve their Google profile, run campaigns, answer customer questions.
+## Problem kya hai? (Simple explanation)
 
-The challenge: **build the brain behind Vera's messages**.
+magicpin ke ~1 lakh merchant partners hain — restaurants, salons, dentists, gyms, pharmacies. Unke paas **Vera** naam ka WhatsApp AI assistant hai jo merchants ko daily message karta hai:
+- Google profile improve karo
+- Campaign chalaao
+- Customer questions answer karo
 
-Given these 4 inputs, produce the perfect next WhatsApp message:
+**Challenge:** Vera ka "brain" banao — ek function jo 4 inputs leke best WhatsApp message compose kare.
 
-| Input | What it contains |
+```
+compose(category, merchant, trigger, customer?) → message
+```
+
+| Input | Kya hota hai isme |
 |---|---|
-| `category` | Business type norms — voice, allowed vocabulary, offer patterns, competitor benchmarks, research digests |
-| `merchant` | This specific business — name, city, performance metrics (views/calls/CTR), active offers, conversation history, signals |
-| `trigger` | Why message NOW — a research digest dropped, their calls dipped 40%, a customer recall is due, a festival is 4 days away |
-| `customer` (optional) | When messaging a merchant's customer on their behalf — name, language pref, last visit, consent |
+| `category` | Business type ke rules — doctor ka tone alag, salon ka alag |
+| `merchant` | Is specific shop ki details — name, city, CTR%, active offers, signals |
+| `trigger` | Abhi message kyo? — calls -40% hua, research paper aaya, festival 4 din mein |
+| `customer` | Agar merchant ki taraf se kisi customer ko message — uska naam, language, last visit |
 
-Output per message:
+Output:
 ```json
-{ "body": "...", "cta": "binary|open_ended|none", "send_as": "vera|merchant_on_behalf",
+{ "body": "...", "cta": "binary/open_ended/none", "send_as": "vera/merchant_on_behalf",
   "suppression_key": "...", "rationale": "..." }
 ```
 
-Served over a live HTTP API the judge harness calls: `/v1/context`, `/v1/tick`, `/v1/reply`, `/v1/healthz`, `/v1/metadata`.
+Yeh sab ek **live HTTP API** ke through judge harness call karta hai: `/v1/context`, `/v1/tick`, `/v1/reply`, `/v1/healthz`, `/v1/metadata`
 
 ---
 
 ## Scoring (5 dimensions × 10 = 50 total)
 
-| Dimension | What kills your score | What wins |
+| Dimension | Kya galat hota hai | Kya sahi hota hai |
 |---|---|---|
-| **Specificity** | "10% off", "boost your sales", "kaafi din ho gaye" | Real numbers: "CTR 2.1% vs peer 3.0%", "78 lapsed patients", "JIDA Oct p.14" |
-| **Category fit** | Dentist message sounding like a retail promo | Clinical vocab, peer tone, source citations for dentists; operator language for restaurants |
-| **Merchant fit** | Not using owner name. Ignoring their actual numbers. Wrong language | "Meera, aapke 78 lapsed patients…" — name + their real data + Hindi mix |
-| **Trigger relevance** | Generic nudge not connected to the trigger event | "Calls -50% this week vs baseline 12" — exact trigger payload data |
-| **Engagement compulsion** | Two CTAs. CTA not last. "Let me know if interested" | Loss aversion + single "Reply YES" at the end |
+| **Specificity** | "boost your sales", "10% off", "kaafi din ho gaye" | Real numbers: "CTR 2.1% vs peer 3.0%", "78 lapsed patients", "JIDA Oct p.14" |
+| **Category fit** | Dentist ko retail promo jaisa message | Clinical vocab, peer tone, source citations |
+| **Merchant fit** | Owner ka naam nahi, unke actual numbers nahi | "Meera, aapke 78 lapsed patients..." — name + real data + Hindi mix |
+| **Trigger relevance** | Generic nudge — trigger se connected nahi | "Calls -50% this week vs baseline 12" — trigger payload ka data |
+| **Engagement compulsion** | 2 CTAs, CTA last mein nahi, "let me know" close | Loss aversion + single "Reply YES" at the end |
 
 ---
 
-## Our Approach: LLM-in-hot-path (temperature=0)
+## Hamara approach: LLM (temperature=0) via OpenRouter
 
-We use Claude Haiku via OpenRouter with a carefully engineered prompt. The brief allows this.
+Claude Haiku use karte hain OpenRouter ke through, carefully engineered prompt ke saath.
 
-**Why LLM over deterministic templates:**
-- Templates hit a ceiling on specificity — can't pre-write every merchant+trigger combination
-- Determinism is free at temperature=0 — same input → same output every run
-- Speed: Haiku responds in ~1-2s, well inside the 30s budget
-- Adaptability: when judge injects new context mid-test, LLM naturally uses it; templates require explicit slot-mapping for every new field
+**Kyo LLM, templates nahi?**
+- Templates ka ceiling hota hai — har merchant+trigger combination ke liye alag template nahi likh sakte
+- temperature=0 pe determinism free hai — same input → same output har baar
+- Haiku respond karta hai ~1-2s mein, judge ka 15s budget kaafi hai
+- Jab judge mid-test naya context inject kare, LLM automatically use kar leta hai — templates ko manual slot-mapping chahiye
 
-**Tradeoff:** LLM calls cost money and fail on bad API keys. Mitigated with Haiku (cheapest) and try/except around every compose call (bot never crashes, just skips the trigger).
+**Tradeoff:** LLM calls costly hain aur timeout ho sakti hain. Mitigation: Haiku (cheapest), aur har trigger ke liye try/except (bot crash nahi hoga, sirf trigger skip hoga).
 
 ---
 
-## Pipeline
+## Architecture
 
 ```
 POST /v1/context  →  store[(scope, context_id)] = {version, payload}
-POST /v1/tick     →  for each active trigger:
-                       1. Look up merchant + category
-                       2. Check suppression (skip if sent within 2min)
-                       3. compose(category, merchant, trigger, customer?) via LLM
-                       4. Check anti-repetition (skip if same body hash as last message)
-                       5. Return action
-POST /v1/reply    →  classify reply → auto-reply/intent/hostile → send/wait/end
+
+POST /v1/tick     →  PARALLEL mein sab triggers process karo:
+                       asyncio.gather([compose(trigger_1), compose(trigger_2), ...])
+                       → ek saath sab LLM calls, 3s mein done (sequential 15s+ tha)
+
+POST /v1/reply    →  Reply classify karo → auto-reply/intent/hostile → send/wait/end
 ```
 
 ---
 
-## Iteration Log (how we improved, in order)
+## Iteration Log — Kya fix kiya, kyo kiya
 
-### Iteration 0 — First working pass
+### Iteration 0 — Pehla working pass
 - Basic FastAPI server with all 5 endpoints
-- Simple compose prompt asking for JSON output
-- TEST_SCENARIO = "all" (only runs operational tests — warmup, auto-reply, intent, hostile)
-- **Result: operational tests passing but no message scoring**
+- Simple compose prompt with JSON output
+- `TEST_SCENARIO = "all"` — sirf operational tests (warmup, auto-reply, intent, hostile)
+- **Problem: message scoring hi nahi ho raha tha**
 
-### Iteration 1 — Discovered missing full_evaluation
-- Friend's bot ran `TEST_SCENARIO = "full_evaluation"` which calls `/v1/tick` + scores every composed message
-- Our `"all"` scenario only tested operations, not message quality
-- Friend's avg score: **34/50 (68%)**
-- Friend's weakness: generic dormancy messages ("N din ho gaye baat kiye") scoring 29-36/50
-  - These messages said nothing about the merchant's actual business state
-  - Specificity 3-6/10 because no real facts were used
+### Iteration 1 — Full evaluation mode discover kiya
+**Kya hua:** Friend ka bot `full_evaluation` use kar raha tha — jo `/v1/tick` call karta hai aur har composed message ko score karta hai. Hamara `"all"` sirf operational tests tha, message quality test hi nahi tha.
 
-**Fix applied:**
-1. Changed `TEST_SCENARIO = "full_evaluation"`
-2. Completely rewrote compose prompt with:
-   - Trigger-specific strategy table (what data to pull for each trigger kind)
-   - Explicit "≥2 concrete facts" requirement
-   - CTR gap pre-computed in context (`ctr_vs_peer_note`)
-   - Specific dormancy fix: "DO NOT say N days since last message — pivot to their strongest signal"
-   - All 5 category voices spelled out with vocabulary examples
+**Friend ka score:** 34/50 (68%) average
+- **Weakness:** Generic dormancy messages scoring 29-36/50
+- Reason: Yeh messages bas kehte the "N din ho gaye baat kiye" — merchant ke actual business data ka use nahi tha
 
-### What good vs bad looks like (from case studies)
+**Kya fix kiya:**
+1. `TEST_SCENARIO = "full_evaluation"` set kiya
+2. Compose prompt completely rewrite kiya:
+   - Har trigger kind ke liye specific strategy (research_digest, perf_dip, dormant, etc.)
+   - "≥2 concrete facts" requirement — koi bhi generic line nahi
+   - CTR gap pre-compute kiya context mein — built-in specificity anchor
+   - Dormancy fix: "sirf 'N days ago' mat kaho — merchant ke strongest signal pe pivot karo"
 
-**BAD (friend's dormancy messages, 29-34/50):**
+### Iteration 2 — 3 critical bugs fix kiye (YEH WALA ITERATION)
+
+**Bug 1: Tick timeout** ❌
+- **Kya tha:** `/v1/tick` mein 5 triggers sequentially process hote the
+- **Calculation:** 5 triggers × 3s/LLM call = 15s — judge ka timeout bhi 15s hai → timeout!
+- **Fix:** `asyncio.gather()` use kiya — ab saare triggers parallel mein process hote hain
+- **Result:** 5 triggers → ~3s total (5× faster)
+
+```python
+# PEHLE (sequential — timeout hota tha)
+for trg_id in triggers:
+    result = compose(...)  # 3s wait
+    
+# AB (parallel — 3s mein sab ho jaata hai)
+results = await asyncio.gather(
+    *[_process_trigger(tid) for tid in triggers]
+)
+```
+
+**Bug 2: JSON parse error** ❌
+- **Kya tha:** LLM output mein control characters aate the (e.g. `\x0b`) jo JSON.loads() crash karte the
+- **Error:** `Invalid control character at: line 2 column 188`
+- **Fix:** Ek regex add kiya jo JSON parse karne se pehle control chars strip kare:
+```python
+raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', raw)
+```
+
+**Bug 3: LLM_MODEL wrong tha** ❌
+- **Kya tha:** `judge_simulator.py` mein `LLM_MODEL = "anthropic/claude-3-haiku"` set tha
+- **Yeh kya hai:** Yeh JUDGE ka model hai (scoring ke liye), hamara bot ka nahi
+- **Friend ka config:** `LLM_MODEL = ""` (empty — OpenRouter apna default use karta hai)
+- **Fix:** `LLM_MODEL = ""` set kiya
+
+---
+
+## Good vs Bad Examples (interview mein samjhao)
+
+**BAD (friend ka dormancy message — 29/50):**
 > "Hi Padma, 79 din ho gaye baat kiye, aur bina kaam ke profile chalti rehti hai..."
 
-What's wrong: No merchant-specific facts. Could be sent to any merchant. No trigger relevance beyond "you haven't replied."
+Kya galat: Koi real fact nahi. Har merchant ko same message. Trigger relevance zero.
 
-**GOOD (case study, 50/50):**
-> "Dr. Meera, JIDA's Oct issue landed. 2,100-patient trial showed 3-month fluoride recall cuts caries recurrence 38% better than 6-month. Relevant to your 124 high-risk adult patients — worth a look (2-min abstract). Want me to pull it + draft a patient-ed WhatsApp?"
+**GOOD (case study — 50/50):**
+> "Dr. Meera, JIDA's Oct issue landed. 2,100-patient trial showed 3-month fluoride recall cuts caries recurrence 38% better than 6-month. Relevant to your 124 high-risk adult patients — want me to pull it + draft a patient-ed WhatsApp?"
 
-What's right: 3 real numbers (2100, 38%, 124), source citation, merchant's specific patient cohort, single CTA, curiosity lever.
-
----
-
-## Key Anti-patterns (cost -2 per occurrence)
-
-- Multiple CTAs in one message
-- CTA not in the last sentence  
-- Inventing data not in context (especially fake research citations or competitor names)
-- Long preamble ("I hope you're having a great day...")
-- Re-introducing Vera after the first message
-- Same body sent twice to same merchant
-- Generic dormancy framing instead of pivoting to merchant's real signals
+Kya sahi: 3 real numbers (2100, 38%, 124), source citation, merchant ki specific patient cohort, single CTA, curiosity lever.
 
 ---
 
-## Running the Judge
+## Anti-patterns (har ek pe -2 penalty)
+
+- Ek message mein 2 CTAs
+- CTA last sentence mein nahi
+- Context mein jo nahi hai wo invent karna (fake research, fake competitor names)
+- Long preamble ("I hope you're doing well...")
+- First message ke baad re-introduction
+- Same body twice to same merchant
+- Generic dormancy message instead of merchant ke real signals
+
+---
+
+## Commands
 
 ```bash
-# Terminal 1 — Start the bot
+# Terminal 1 — Bot start karo
 cd ~/Documents/dev/Projects/magicPin
 source venv/bin/activate
 uvicorn bot:app --host 0.0.0.0 --port 8080
 
-# Terminal 2 — Run judge (full scoring)
-cd ~/Documents/dev/Projects/magicPin
+# Terminal 2 — Judge run karo
 source venv/bin/activate
 python magicpin-ai-challenge/judge_simulator.py
 ```
 
-After each judge run: look at the **weakest scoring dimension**, trace it to the right file:
+**Har judge run ke baad:** Sabse weak dimension dekho, us file mein fix karo:
 
-| Weak dimension | Fix in |
+| Weak dimension | Kahan fix karna hai |
 |---|---|
-| Specificity | `composer.py` SYSTEM_PROMPT — add more trigger-specific data extraction |
-| Category fit | `composer.py` voice rules section |
-| Merchant fit | `_extract_context()` — are we passing enough merchant fields? |
-| Trigger relevance | SYSTEM_PROMPT trigger strategy table |
-| Engagement compulsion | SYSTEM_PROMPT compulsion levers section |
+| Specificity | `composer.py` → SYSTEM_PROMPT trigger strategy table |
+| Category fit | `composer.py` → voice rules section |
+| Merchant fit | `composer.py` → `_extract_context()` mein aur fields add karo |
+| Trigger relevance | `composer.py` → trigger-specific strategy |
+| Engagement compulsion | `composer.py` → compulsion levers section |
 
 ---
 
 ## File Map
 
-| File | Purpose |
+| File | Kya karta hai |
 |---|---|
-| `bot.py` | FastAPI server — all 5 endpoints, in-memory stores, suppression, anti-repetition |
-| `composer.py` | `compose()` — LLM prompt + context extraction + structured output |
-| `conversation.py` | Multi-turn reply handler — auto-reply detection, intent routing, LLM fallback |
+| `bot.py` | FastAPI server — 5 endpoints, parallel tick, in-memory stores |
+| `composer.py` | `compose()` — LLM prompt + context extraction + JSON output |
+| `conversation.py` | Multi-turn replies — auto-reply detect, intent route, LLM fallback |
 | `requirements.txt` | fastapi, uvicorn, openai, python-dotenv |
-| `.env` | `OPENROUTER_API_KEY` — never committed to git |
+| `.env` | `OPENROUTER_API_KEY` — git mein kabhi commit mat karo |

@@ -4,6 +4,7 @@ Calls an LLM via OpenRouter at temperature=0 for deterministic output.
 """
 
 import json
+import re
 import os
 from openai import OpenAI
 
@@ -230,6 +231,9 @@ def compose(category: dict, merchant: dict, trigger: dict, customer: dict | None
     if raw.startswith("```"):
         lines = raw.split("\n")
         raw = "\n".join(lines[1:-1]) if lines[-1].strip() == "```" else "\n".join(lines[1:])
+
+    # Remove control characters (0x00-0x1F except \n \r \t) that break JSON parsing
+    raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', raw)
 
     result = json.loads(raw)
 

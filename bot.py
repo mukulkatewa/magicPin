@@ -3,10 +3,14 @@ Vera Bot — magicpin AI Challenge
 FastAPI server implementing the 5-endpoint judging contract.
 
 Start: uvicorn bot:app --host 0.0.0.0 --port 8080
+
+KEY FIX: tick() processes all triggers in PARALLEL using asyncio.gather()
+         so 5 LLM calls finish in ~3s instead of 5×3s = 15s (judge timeout = 15s)
 """
 
 import time
 import hashlib
+import asyncio
 import os
 from datetime import datetime, timezone
 from typing import Any
@@ -24,20 +28,12 @@ START = time.time()
 
 # ── In-memory stores ──────────────────────────────────────────────────────────
 
-# (scope, context_id) → {version: int, payload: dict}
-contexts: dict[tuple[str, str], dict] = {}
+contexts: dict[tuple[str, str], dict] = {}       # (scope, context_id) → {version, payload}
+conversations: dict[str, list[dict]] = {}         # conv_id → [turns]
+sent_keys: dict[str, float] = {}                  # suppression_key → sent_at timestamp
+last_body: dict[str, str] = {}                    # merchant_id → last body hash
 
-# conversation_id → list of {from_role, msg, ts}
-conversations: dict[str, list[dict]] = {}
-
-# suppression_key → sent_at_unix (float); TTL = SUPPRESS_TTL_SECONDS
-sent_keys: dict[str, float] = {}
-
-# merchant_id → last message body hash (anti-repetition)
-last_body: dict[str, str] = {}
-
-# Per judge run, short TTL prevents collision between back-to-back runs
-SUPPRESS_TTL_SECONDS = 120  # 2 min — keeps test runs clean
+SUPPRESS_TTL = 120   # 2 min — short so back-to-back judge runs don't collide
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -49,9 +45,7 @@ def _body_hash(text: str) -> str:
 
 def _is_suppressed(key: str) -> bool:
     sent_at = sent_keys.get(key)
-    if sent_at is None:
-        return False
-    return (time.time() - sent_at) < SUPPRESS_TTL_SECONDS
+    return sent_at is not None and (time.time() - sent_at) < SUPPRESS_TTL
 
 def _suppress(key: str):
     sent_keys[key] = time.time()
@@ -80,14 +74,14 @@ async def metadata():
     return {
         "team_name": "Vera Engine",
         "team_members": ["Rajesh"],
-        "model": "claude-haiku-4-5-20251001",
+        "model": "openrouter/anthropic/claude-3-haiku",
         "approach": (
-            "LLM composer (temperature=0) with structured prompt engineering. "
-            "Extracts key signals from all 4 context layers, builds a focused "
-            "context block, and asks Claude to compose with hard specificity + voice constraints."
+            "LLM composer (temperature=0) with structured prompt. "
+            "Parallel async tick — all triggers composed simultaneously. "
+            "Trigger-specific strategy: each trigger kind has its own data extraction path."
         ),
         "contact_email": "rajeshrkk112003@gmail.com",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "submitted_at": "2026-07-12T00:00:00Z",
     }
 
@@ -119,81 +113,92 @@ async def push_context(body: ContextBody):
     }
 
 
+async def _process_trigger(trg_id: str) -> dict | None:
+    """
+    Compose one message for a trigger. Runs inside asyncio.gather() so all
+    triggers in a batch are processed in parallel, not sequentially.
+    Returns an action dict or None (skip silently).
+    """
+    trg = _get_ctx("trigger", trg_id)
+    if not trg:
+        return None
+
+    sup_key = trg.get("suppression_key", trg_id)
+    if _is_suppressed(sup_key):
+        return None
+
+    merchant_id = trg.get("merchant_id")
+    customer_id = trg.get("customer_id")
+
+    merchant = _get_ctx("merchant", merchant_id) if merchant_id else None
+    if not merchant:
+        return None
+
+    category_slug = merchant.get("category_slug")
+    category = _get_ctx("category", category_slug) if category_slug else None
+    if not category:
+        return None
+
+    customer = _get_ctx("customer", customer_id) if customer_id else None
+
+    try:
+        # asyncio.to_thread runs the blocking LLM call in a thread pool
+        # so it doesn't block the event loop — this is what makes parallelism work
+        result = await asyncio.to_thread(compose, category, merchant, trg, customer)
+    except Exception as exc:
+        print(f"[tick] compose failed for {trg_id}: {exc}")
+        return None
+
+    body_text = result.get("body", "").strip()
+    if not body_text:
+        return None
+
+    # Anti-repetition: skip if body is identical to last message we sent this merchant
+    bh = _body_hash(body_text)
+    if last_body.get(merchant_id) == bh:
+        return None
+    last_body[merchant_id] = bh
+    _suppress(sup_key)
+
+    return {
+        "conversation_id": f"conv_{merchant_id}_{trg_id}",
+        "merchant_id": merchant_id,
+        "customer_id": customer_id,
+        "send_as": result.get("send_as", "vera"),
+        "trigger_id": trg_id,
+        "template_name": f"vera_{trg.get('kind', 'generic')}_v1",
+        "template_params": [
+            merchant.get("identity", {}).get("name", ""),
+            trg.get("kind", ""),
+            body_text[:40],
+        ],
+        "body": body_text,
+        "cta": result.get("cta", "open_ended"),
+        "suppression_key": result.get("suppression_key", sup_key),
+        "rationale": result.get("rationale", ""),
+    }
+
+
 class TickBody(BaseModel):
     now: str
     available_triggers: list[str] = []
 
 @app.post("/v1/tick")
 async def tick(body: TickBody):
+    trg_ids = body.available_triggers[:20]  # cap at 20 per spec
+
+    # Run ALL trigger compositions in parallel — this is the critical fix.
+    # Sequential: 5 triggers × 3s/LLM = 15s (judge times out at 15s)
+    # Parallel:   5 triggers all at once → ~3s total
+    results = await asyncio.gather(
+        *[_process_trigger(tid) for tid in trg_ids],
+        return_exceptions=True,
+    )
+
     actions = []
-
-    for trg_id in body.available_triggers:
-        # Guard: max 20 actions per tick
-        if len(actions) >= 20:
-            break
-
-        trg = _get_ctx("trigger", trg_id)
-        if not trg:
-            continue
-
-        # Suppression check
-        sup_key = trg.get("suppression_key", trg_id)
-        if _is_suppressed(sup_key):
-            continue
-
-        merchant_id = trg.get("merchant_id")
-        customer_id = trg.get("customer_id")
-
-        merchant = _get_ctx("merchant", merchant_id) if merchant_id else None
-        if not merchant:
-            continue
-
-        category_slug = merchant.get("category_slug")
-        category = _get_ctx("category", category_slug) if category_slug else None
-        if not category:
-            continue
-
-        customer = _get_ctx("customer", customer_id) if customer_id else None
-
-        try:
-            result = compose(category, merchant, trg, customer)
-        except Exception as exc:
-            # Compose failed — skip this trigger, don't crash the tick
-            print(f"[tick] compose failed for {trg_id}: {exc}")
-            continue
-
-        body_text = result.get("body", "")
-        if not body_text:
-            continue
-
-        # Anti-repetition: skip if identical to last message sent to this merchant
-        bh = _body_hash(body_text)
-        if last_body.get(merchant_id) == bh:
-            continue
-        last_body[merchant_id] = bh
-
-        # Mark suppressed
-        _suppress(sup_key)
-
-        conv_id = f"conv_{merchant_id}_{trg_id}"
-
-        actions.append({
-            "conversation_id": conv_id,
-            "merchant_id": merchant_id,
-            "customer_id": customer_id,
-            "send_as": result.get("send_as", "vera"),
-            "trigger_id": trg_id,
-            "template_name": f"vera_{trg.get('kind', 'generic')}_v1",
-            "template_params": [
-                merchant.get("identity", {}).get("name", ""),
-                trg.get("kind", ""),
-                body_text[:40],
-            ],
-            "body": body_text,
-            "cta": result.get("cta", "open_ended"),
-            "suppression_key": result.get("suppression_key", sup_key),
-            "rationale": result.get("rationale", ""),
-        })
+    for r in results:
+        if r and isinstance(r, dict):
+            actions.append(r)
 
     return {"actions": actions}
 
@@ -209,7 +214,6 @@ class ReplyBody(BaseModel):
 
 @app.post("/v1/reply")
 async def reply(body: ReplyBody):
-    # Store this turn
     history = conversations.setdefault(body.conversation_id, [])
     history.append({
         "from_role": body.from_role,
@@ -217,35 +221,32 @@ async def reply(body: ReplyBody):
         "ts": body.received_at,
     })
 
-    result = conv_reply(
-        conversation_id=body.conversation_id,
-        merchant_id=body.merchant_id,
-        customer_id=body.customer_id,
-        from_role=body.from_role,
-        message=body.message,
-        turn_number=body.turn_number,
-        history=history,
-        contexts=contexts,
+    result = await asyncio.to_thread(
+        conv_reply,
+        body.conversation_id,
+        body.merchant_id,
+        body.customer_id,
+        body.from_role,
+        body.message,
+        body.turn_number,
+        history,
+        contexts,
     )
 
-    # Store bot's reply if we're sending
     if result.get("action") == "send":
         history.append({
             "from_role": "vera",
             "msg": result.get("body", ""),
             "ts": _now_iso(),
         })
-        # Anti-repetition for replies too
         if body.merchant_id:
-            bh = _body_hash(result.get("body", ""))
-            last_body[body.merchant_id] = bh
+            last_body[body.merchant_id] = _body_hash(result.get("body", ""))
 
     return result
 
 
 @app.post("/v1/teardown")
 async def teardown():
-    """Judge calls this at end of test — wipe all state."""
     contexts.clear()
     conversations.clear()
     sent_keys.clear()
