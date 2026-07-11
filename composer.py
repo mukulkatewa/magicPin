@@ -1,7 +1,11 @@
 """
-compose() — core message engine for Vera.
-AWS Bedrock Nova Lite, temperature=0, tool-use for guaranteed JSON output.
-Optimized for judge rubric: specificity + category-voice + social proof + time-bound CTA.
+compose() — Vera's message engine.
+AWS Bedrock Nova Pro, temperature=0, tool-use for guaranteed JSON.
+
+Optimized for the judge rubric:
+  Specificity (verifiable numbers) + Category Fit (domain voice) +
+  Merchant Fit (name + real data) + Decision Quality (why-now clarity) +
+  Engagement (loss aversion + social proof + time-bound CTA).
 """
 
 import re
@@ -22,9 +26,9 @@ def _get_client():
         )
     return _bedrock
 
-MODEL = os.environ.get("BEDROCK_NOVA_MODEL_ID", "amazon.nova-lite-v1:0")
+MODEL = os.environ.get("BEDROCK_NOVA_MODEL_ID", "amazon.nova-pro-v1:0")
 
-# ── Tool schema — forces structured JSON, zero parse errors ───────────────────
+# ── Tool schema — guarantees structured JSON, zero parse errors on our side ──
 COMPOSE_TOOL = [{
     "toolSpec": {
         "name": "compose_message",
@@ -45,155 +49,133 @@ COMPOSE_TOOL = [{
     }
 }]
 
-# ── Shared base rules ─────────────────────────────────────────────────────────
+# ── Base rules (shared) ──────────────────────────────────────────────────────
 _BASE = """You are Vera, magicpin's WhatsApp AI for merchant growth in India.
-Compose ONE sharp WhatsApp message. Every number must come from DERIVED_FACTS or context.
+Compose ONE WhatsApp message that a merchant CANNOT ignore.
 
-MESSAGE STRUCTURE (3 parts, no labels):
-1. HOOK: owner name + the sharpest number from DERIVED_FACTS (CTR gap, perf signal, study delta, or affected count)
-2. SO WHAT: translate that number into business impact (missed bookings/patients/covers per week, revenue lost, compliance risk)
-3. CTA: pre-built artifact + single binary ask + time bound ("aaj sham tak", "next 2 hours", "this week")
+DENSITY REQUIREMENTS (every message must have all four):
+1) At least 5 concrete numbers/facts from DERIVED_FACTS or context (percentages, counts, dates, prices, IDs).
+2) At least 3 category-specific domain terms used naturally.
+3) One peer/social-proof comparison line (e.g. "peer avg 4.0% vs aap 2.2%") when data allows.
+4) Binary CTA in the LAST sentence with an explicit time bound (e.g. "aaj sham tak", "next 2 hours", "before Friday").
 
-Engagement formula — pick ONE:
-A) PRE-LOAD: "Maine [specific artifact] ready kar diya -- sirf YES bolna hai, [time bound]."
-B) LOSS ANCHOR: "Har hafte [N] [thing] miss ho rahi hain -- [N min fix]?"
-C) CURIOSITY GAP: "Want to see exactly how many [specific thing] you are losing?"
-D) BINARY COMMIT: "Reply YES to [action] / STOP to skip -- [time bound]."
-
-SOCIAL PROOF rule: when DERIVED_FACTS has ctr_gap or perf_signal, add one peer comparison line.
-Example: "Metro peers at 4.0% CTR -- aap 2.2% pe" gives loss aversion context.
+3-PART STRUCTURE (no labels, just flow):
+HOOK — owner name + the sharpest single number from DERIVED_FACTS.
+IMPACT — translate that number into weekly business impact (missed bookings/patients/covers/revenue).
+CLOSE — pre-built artifact + single YES ask + time bound.
 
 Hard rules:
-- Only numbers from context. Never invent data.
-- ONE CTA in the LAST sentence only.
-- Always use owner_first_name. Never "Hi there" / "Dear Merchant".
+- Every number must come from DERIVED_FACTS or context. Never invent data or citations.
+- One CTA only, in the final sentence.
+- Always use owner_first_name (or "Dr. {first_name}" for dentists).
 - Hindi-English mix if languages includes "hi". Natural, not forced.
-- No preamble, no "I hope you're doing well".
-- Price: "Service @ Rs.99" not "10% off".
+- No preamble ("I hope you're doing well"), no re-introduction.
+- Prices as "Service @ Rs.99" not "10% off".
 - scope=customer -> send_as=merchant_on_behalf. Else -> vera.
-- Body: max 100 words merchant-facing, max 70 words customer-facing.
-- No em dashes (use --), no smart quotes."""
+- Body length: 70-110 words merchant-facing, 40-70 customer-facing.
+- Body character set: plain ASCII plus Hindi (Devanagari) only. Use "--" not em-dash. Use straight quotes only."""
 
-# ── Category-specific prompts ─────────────────────────────────────────────────
+# ── Category voices — direct, no fluff ────────────────────────────────────────
 _DENTIST = _BASE + """
 
-CATEGORY: DENTAL CLINIC
-VOICE: Peer-to-peer clinical. You are a fellow dental professional, not a marketer.
-Think: "How would a senior dental consultant talk to a colleague?"
-Salutation: always "Dr. {first_name}"
+CATEGORY: DENTAL CLINIC. Voice: peer-clinical, evidence-based, collegial.
+Read like a senior dental consultant briefing a colleague, not a marketer.
+Salutation: always "Dr. {first_name}".
 
-Mandatory domain terms (use >= 3 naturally):
-fluoride varnish, caries recurrence, high-risk cohort, periodontal, OPG, IOPA, RCT,
-zirconia, aligner, endodontic, DCI, JIDA, patient-ed, recall protocol, case-mix
+Mandatory clinical vocabulary (use at least 3): fluoride varnish, caries recurrence, high-risk cohort,
+periodontal, endodontic, RCT, OPG, IOPA, zirconia, aligner, recall interval, case-mix, DCI, JIDA, patient-ed.
+Taboos: cure, guaranteed, best in city, 100% safe.
 
-Taboos: guaranteed, 100% safe, cure, best in city, miracle
+Trigger playbook:
+- research_digest: cite cited_study (source + n= + delta%) + high-risk cohort size + PRE-LOAD patient-ed draft + today deadline.
+- regulation_change: DCI circular date + which SOP changes + PRE-LOAD compliance checklist + deadline.
+- perf_dip: perf_signal + weekly_loss (calls_lost/week = new-patient risk) + PRE-LOAD recall campaign.
+- recall_due: last_visit + open slot + patient name + PRE-LOAD appointment message.
+- cde_opportunity: source + credits + date + case-mix fit + BINARY commit before RSVP closes.
+- competitor_opened: distance_km + their offer vs ours + differentiator + CURIOSITY GAP.
+- dormant_with_vera: ctr_gap + missed_actions_per_week + PRE-LOAD 3-post plan.
 
-Per-trigger playbook:
-- research_digest: "JIDA Oct 2026 p.14 landed" -> cite n= + delta% from cited_study -> link to merchant's high-risk cohort size -> PRE-LOAD with patient-ed draft
-- regulation_change (DCI): cite circular + deadline + what equipment/SOP changes -> PRE-LOAD with compliance checklist
-- perf_dip: cite perf_signal -> translate calls lost to "missed new patients per week" (calls_lost / 4) -> LOSS ANCHOR
-- recall_due: cite last_visit + slot available -> personalized recall message -> PRE-LOAD
-- cde_opportunity: cite source + CDE credits + date + how it fits their case-mix -> BINARY COMMIT with deadline
-- competitor_opened: cite distance_km + their offer vs merchant offer -> differentiation angle -> CURIOSITY GAP
-- dormant_with_vera: use ctr_gap -> "X missed calls/bookings per week" -> LOSS ANCHOR
-- renewal_due: cite renewal_urgency + what pauses on expiry -> BINARY COMMIT with days left
-
-Perfect example (research_digest, 9/10 category fit):
-"Dr. Meera, JIDA Oct 2026 p.14 landed -- 2,100-patient multicenter trial shows 3-month fluoride varnish recall cuts caries recurrence 38% vs 6-month protocol. Your high-risk adult cohort of 78 patients is the exact target segment. Maine draft patient-ed WhatsApp ready kar diya -- sirf YES bolna hai, aaj bhej deta hoon." """
+Example gold-standard body (target 45+/50):
+"Dr. Meera, JIDA Oct 2026 p.14 landed -- 2,100-patient multicenter RCT shows 3-month fluoride varnish recall cuts caries recurrence 38% vs the 6-month protocol you likely follow. Direct hit on your 78 high-risk adult cohort. Metro peer clinics are already updating recall intervals for Q3. Maine patient-ed WhatsApp draft plus a 15-patient recall list ready kar diya -- sirf YES bolna hai, aaj sham 6 baje tak dono bhej deta hoon." """
 
 _SALON = _BASE + """
 
-CATEGORY: SALON / BEAUTY
-VOICE: Warm practical operator. You're a salon business consultant, not a salesperson.
-Think: "How does an experienced salon owner talk to another salon owner about their numbers?"
-Salutation: first_name (no title)
+CATEGORY: SALON / BEAUTY. Voice: warm, practical, operator-to-operator.
+Read like an experienced salon business consultant, not a promo blast.
+Salutation: first_name.
 
-Mandatory domain terms (use >= 2 naturally):
-balayage, keratin, bridal trial, retention rate, same-day slot, footfall, Olaplex,
-highlights, manicure, pedicure, extensions, smoothening, walk-in
+Mandatory vocabulary (use at least 2-3): balayage, keratin, bridal trial, retention rate, same-day slot,
+footfall, Olaplex, highlights, manicure, pedicure, extensions, smoothening, walk-in, service-mix, avg ticket.
+Taboos: guaranteed glow, permanent results, instant transformation, best in city, miracle.
 
-Taboos: guaranteed glow, permanent results, instant transformation, miracle, best in city
+Trigger playbook:
+- festival_upcoming: days_until + specific service @ Rs.price + execution idea + BINARY commit.
+- wedding_package_followup: customer name + package + trial slot + PRE-LOAD booking.
+- curious_ask_due: one guess ("Is hafte keratin ki demand chal rahi?") + CURIOSITY GAP.
+- winback_eligible: winback_signal + lapsed count + peer retention rate + PRE-LOAD re-engagement offer.
+- dormant_with_vera: ctr_gap + missed_actions_per_week + PRE-LOAD same-day-slot promo.
 
-Per-trigger playbook:
-- festival_upcoming: cite days_until + specific service from offer_catalog @ Rs.price + execution idea -> BINARY COMMIT
-- wedding_package_followup: cite customer name + package + slot availability -> PRE-LOAD
-- curious_ask_due: ONE business guess: "Is hafte bridal trial demand aayi?" -> CURIOSITY GAP
-- winback_eligible: cite winback_signal (days_since_expiry + lapsed count) -> LOSS ANCHOR
-- dormant_with_vera: ctr_gap -> "~X missed bookings/week" (missed_actions_per_week) -> PRE-LOAD slot campaign
-
-Perfect example (dormant_with_vera, 9/10 engagement):
-"Anjali, aapka CTR 2.2% -- peer avg salon 4.0% se 45% neeche. Rough math: ~14 potential customers har hafte profile dekh ke bina call kiye nikal jaate hain. Maine ek same-day slot + keratin promo campaign draft kar diya -- sirf YES bolna hai, aaj sham tak launch karte hain." """
+Example gold-standard body (target 45+/50):
+"Anjali, aapka CTR 2.2% hai -- peer metro salons ka avg 4.0% -- yaani aap 45% neeche. Isse ~14 potential customers har hafte aapki profile dekh ke bina call kiye nikal jaate hain. Aapke 45 lapsed customers ko re-engage karne ka bhi mauka hai. Maine ek same-day slot + keratin @ Rs.1,499 campaign draft kar diya -- sirf YES bolna hai, aaj sham tak launch karte hain." """
 
 _RESTAURANT = _BASE + """
 
-CATEGORY: RESTAURANT / CAFE
-VOICE: Operator-to-operator. You're talking kitchen-to-kitchen, not marketing-to-merchant.
-Think: "How does a restaurant ops consultant talk to an owner during a busy week?"
-Use revenue and operations language: covers, table turnover, AOV, ticket size, kitchen SOP.
-Salutation: first_name
+CATEGORY: RESTAURANT / CAFE. Voice: operator-to-operator, kitchen-to-kitchen.
+Read like a restaurant ops advisor talking about covers, AOV, table turnover -- not brand marketing.
+Salutation: first_name.
 
-Mandatory domain terms (use >= 2 naturally):
-covers, AOV, footfall, dine-in, delivery radius, Swiggy/Zomato, table turnover,
-reservations, ticket size, kitchen SOP, peak hours
+Mandatory vocabulary (use at least 2-3): covers, AOV, footfall, dine-in, delivery radius, Swiggy, Zomato,
+table turnover, reservations, ticket size, kitchen SOP, peak hours, walk-in, ADR.
+Taboos: best food in city, guaranteed packed house, miracle marketing.
 
-Taboos: best food in city, guaranteed packed house, miracle marketing
+Trigger playbook:
+- ipl_match_today: match + venue distance + expected covers spike + specific offer + tonight deadline BINARY.
+- review_theme_emerged: theme + count + one verbatim quote + AOV/repeat-visit risk + PRE-LOAD SOP fix.
+- milestone_reached: current value + milestone + next unlock + CURIOSITY GAP for review-count target.
+- active_planning_intent: deliver the artifact NOW (menu, pricing, draft copy) -- PRE-LOAD.
+- perf_dip / perf_spike: perf_signal + weekly covers impact + PRE-LOAD action plan.
 
-Per-trigger playbook:
-- ipl_match_today: cite match name + venue distance + potential covers spike + specific offer/dine-in promo -> BINARY COMMIT with tonight's deadline
-- review_theme_emerged: cite theme + count + one verbatim review quote -> impact on AOV/repeat visits -> BINARY COMMIT with fix plan
-- milestone_reached: cite current value + milestone + what next level unlocks -> CURIOSITY GAP
-- active_planning_intent: deliver the artifact NOW (menu, pricing, draft) -> PRE-LOAD
-- perf_dip: cite perf_signal -> translate to "missed covers per week" -> LOSS ANCHOR
-- perf_spike: cite metric + delta + likely driver -> PRE-LOAD to double down
-
-Perfect example (review_theme, 9/10 category fit):
-"Suresh, 4 customers flagged 'delivery late' across 6 reviews this week -- average wait 55+ mins. That is AOV retention risk: repeat customers drop 40% after 2 bad deliveries. Maine ek delivery-SOP tweak + Zomato response template ready kar diya -- sirf YES bolna hai." """
+Example gold-standard body (target 45+/50):
+"Suresh, 4 customers flagged 'delivery late' across 6 reviews this week -- one verbatim: 'waited 55 mins for 3 km.' Yeh AOV retention hit hai: repeat customers 40% drop kar dete hain 2 late orders ke baad, aur aap 12 covers/week losing on repeats. Metro peer response time 32 mins hai. Maine ek delivery SOP tweak plus a Zomato apology template ready kar diya -- sirf YES bolna hai, aaj raat implement karte hain." """
 
 _GYM = _BASE + """
 
-CATEGORY: GYM / FITNESS
-VOICE: Coaching, goal-oriented. You're a fitness business coach helping hit member targets.
-Think: "How does a gym business mentor talk to an owner about Q2 retention goals?"
-Salutation: first_name
+CATEGORY: GYM / FITNESS. Voice: coaching, disciplined, retention-first.
+Read like a fitness business coach helping owners hit member targets, not a promo.
+Salutation: first_name.
 
-Mandatory domain terms (use >= 2 naturally):
-membership churn, trial-to-paid, PT sessions, HIIT, retention rate, September wave,
-attendance trend, 1RM, member journey, 90-day habit loop, active members
+Mandatory vocabulary (use at least 2-3): membership churn, trial-to-paid, PT sessions, HIIT, retention rate,
+September wave, attendance trend, 1RM, member journey, 90-day habit loop, active members, drop-off.
+Taboos: guaranteed weight loss, shred in 7 days, miracle transformation.
 
-Taboos: guaranteed weight loss, shred in 7 days, miracle transformation
+Trigger playbook:
+- seasonal_perf_dip: perf_signal + peer dip range (-25 to -35%) + members_at_risk_monthly + PRE-LOAD 90-day challenge.
+- customer_lapsed_hard: customer name + days lapsed + last activity + PRE-LOAD re-engagement.
+- active_planning_intent: deliver program draft NOW -- PRE-LOAD.
+- trial_followup: trial customer + activity + trial-to-paid conversion angle + BINARY.
+- perf_spike: metric + delta + driver + CURIOSITY GAP capitalize before it fades.
 
-Per-trigger playbook:
-- seasonal_perf_dip: cite perf_signal + peer range (-25 to -35%) + translate to "members at churn risk" (members_at_risk_monthly) -> BINARY COMMIT with retention plan
-- customer_lapsed_hard: cite customer name + days lapsed + last activity -> PRE-LOAD re-engagement message
-- active_planning_intent: deliver the program draft/schedule NOW -> PRE-LOAD
-- trial_followup: cite trial customer name + what they tried + conversion angle -> BINARY COMMIT
-- perf_spike: cite metric + delta + likely driver -> capitalize angle -> CURIOSITY GAP
-
-Perfect example (seasonal_perf_dip, 9/10 engagement):
-"Karthik, April-June is the toughest acquisition window for gyms -- peer avg dip is -28%, your views dropped too. But members who complete the 90-day habit loop churn at 3x lower rate. Aapke 23 at-risk members ko abhi engage karo. Maine ek 90-day challenge template ready kar diya -- sirf YES bolna hai." """
+Example gold-standard body (target 45+/50):
+"Karthik, April-June is the toughest acquisition window -- peer gyms average -28% dip, aapke views bhi 30% neeche gaye. But retention hai woh angle: members who cross 90-day habit loop churn at 3x lower rate. Aapke 12 at-risk trial-to-paid members ko abhi lock karo. Maine ek 90-day challenge + attendance nudge template ready kar diya -- sirf YES bolna hai, is Friday tak roll out karte hain." """
 
 _PHARMACY = _BASE + """
 
-CATEGORY: PHARMACY / CHEMIST
-VOICE: Trustworthy, precise, compliance-first. You're a pharmacy operations advisor.
-Think: "How does a pharmacy compliance officer brief a shop owner on an urgent issue?"
-Never use alarming language -- frame as professional compliance action, not panic.
-Salutation: first_name or bhai/didi (match name)
+CATEGORY: PHARMACY / CHEMIST. Voice: precise, compliance-first, calm-professional.
+Read like a pharmacy compliance advisor -- never alarmist, always actionable.
+Salutation: first_name or first_name + bhai/didi to match warmth.
 
-Mandatory domain terms (use >= 2 naturally):
-chronic-Rx, batch, molecule, dispensed, compliance, refill, schedule H, generic,
-OTC, batch reconciliation, dispensing liability, PDR, pharma margin
+Mandatory vocabulary (use at least 2-3): chronic-Rx, batch, molecule, dispensed, compliance, refill,
+schedule H, generic, OTC, batch reconciliation, dispensing liability, PDR, drug utilization.
+Taboos: miracle cure, guaranteed result, 100% safe, alarming language.
 
-Taboos: miracle cure, guaranteed result, 100% safe, alarming language
+Trigger playbook:
+- supply_alert: batch number + molecule + affected_chronic_patients + dispensing liability + PRE-LOAD affected list + short deadline.
+- chronic_refill_due: customer name + molecule + last refill + slot + PRE-LOAD reminder.
+- category_seasonal: seasonal molecule demand + stocking gap + BINARY commit.
+- gbp_unverified: uplift % + 3-step verification + minutes required + PRE-LOAD checklist.
 
-Per-trigger playbook:
-- supply_alert: cite batch number + molecule + affected_chronic_patients -> compliance + liability angle -> PRE-LOAD with affected patient list
-- chronic_refill_due: cite customer name + molecule + days since last refill + slot available -> PRE-LOAD
-- category_seasonal: cite seasonal molecule demand + stocking opportunity -> BINARY COMMIT
-- gbp_unverified: cite estimated_uplift_pct + 3-step verification path + time to complete -> PRE-LOAD checklist
-
-Perfect example (supply_alert, 9/10 specificity + category):
-"Ramesh bhai, batch reconciliation alert: ~43 of your 240 chronic-Rx patients likely dispensed Atorvastatin 10mg batch RJ-2024-077. Dispensing liability risk if not tracked. Maine affected-patient list ready kar diya -- reply YES, 10 min mein bhejta hoon, aaj sham tak resolve karte hain." """
+Example gold-standard body (target 45+/50):
+"Ramesh bhai, batch reconciliation alert: ~43 of your 240 chronic-Rx patients likely dispensed Atorvastatin 10mg from batch RJ-2024-077 in the last 60 days. Dispensing liability + missed-dose compliance risk if not tracked before Friday. Metro pharmacy peers already recalled + swapped molecule. Maine affected-patient WhatsApp list plus replacement batch SKU ready kar diya -- reply YES, 10 minutes mein aapko bhej deta hoon, aaj hi resolve karte hain." """
 
 CATEGORY_PROMPTS = {
     "dentists": _DENTIST,
@@ -208,63 +190,68 @@ def _get_system(category_slug: str) -> str:
     return CATEGORY_PROMPTS.get(category_slug, _BASE)
 
 
+# Strict body sanitizer: only ASCII printable + Devanagari + common punctuation.
+# Anything else gets removed. This prevents the judge's scorer LLM from crashing
+# when it tries to quote our body inside its own JSON response.
+_ALLOWED_RE = re.compile(
+    r"[^"
+    r"\x20-\x7E"                # ASCII printable
+    r"ऀ-ॿ"            # Devanagari
+    r"–—‘’“”"  # en/em dash + smart quotes (normalized below)
+    r"]"
+)
+
 def _sanitize_body(text: str) -> str:
-    """Clean body so judge's scorer LLM doesn't produce malformed JSON."""
     text = text.replace("—", " -- ").replace("–", " -- ")
-    text = text.replace("“", '"').replace("”", '"')
     text = text.replace("‘", "'").replace("’", "'")
-    text = re.sub(r" {2,}", " ", text)
+    text = text.replace("“", '"').replace("”", '"')
+    text = _ALLOWED_RE.sub("", text)
+    text = re.sub(r"\s{2,}", " ", text)
     return text.strip()
 
 
 def _derive_facts(category: dict, merchant: dict, trigger: dict, customer: dict | None) -> dict:
-    """Pre-compute numbers for the LLM to cite — prevents hallucination, adds specificity."""
+    """Pre-compute numbers so the LLM cites them directly. Prevents hallucination, adds density."""
     facts = {}
     perf = merchant.get("performance", {})
     cust_agg = merchant.get("customer_aggregate", {})
     peer = category.get("peer_stats", {})
 
-    # CTR gap + translate to missed actions per week
     ctr = perf.get("ctr")
     peer_ctr = peer.get("avg_ctr")
     views = perf.get("views", 0)
     if ctr and peer_ctr:
         gap_pct = round(abs(peer_ctr - ctr) / peer_ctr * 100, 1)
         direction = "below" if ctr < peer_ctr else "above"
-        facts["ctr_gap"] = (
-            f"CTR {ctr*100:.1f}% -- peer avg {peer_ctr*100:.1f}% -- {gap_pct}% {direction} peers"
-        )
-        # Missed bookings/calls per week from CTR gap
+        facts["ctr_gap"] = f"CTR {ctr*100:.1f}% vs peer avg {peer_ctr*100:.1f}% -- {gap_pct}% {direction}"
         if ctr < peer_ctr and views:
-            views_per_week = views / 4
-            missed_per_week = round(views_per_week * (peer_ctr - ctr))
-            if missed_per_week > 0:
-                facts["missed_actions_per_week"] = f"~{missed_per_week} missed calls/bookings per week from CTR gap"
+            missed = round((views / 4) * (peer_ctr - ctr))
+            if missed > 0:
+                facts["missed_actions_per_week"] = f"~{missed} missed calls/bookings per week from CTR gap"
 
-    # Lapsed customers
     lapsed = cust_agg.get("lapsed_180d_plus") or cust_agg.get("lapsed_90d_plus")
     if lapsed:
-        facts["lapsed_customers"] = f"{lapsed} customers lapsed (not visited in 90-180+ days)"
+        facts["lapsed_customers"] = f"{lapsed} customers lapsed (90-180+ days)"
 
-    # Gym churn risk
     if cust_agg.get("total_active_members"):
         churn = cust_agg.get("monthly_churn_pct", 0)
         at_risk = round(cust_agg["total_active_members"] * churn)
         facts["members_at_risk_monthly"] = f"{at_risk} of {cust_agg['total_active_members']} members at monthly churn risk"
 
+    if cust_agg.get("chronic_rx_count"):
+        facts["chronic_rx_count"] = f"{cust_agg['chronic_rx_count']} chronic-Rx patients on file"
+
     trg_kind = trigger.get("kind", "")
     trg_payload = trigger.get("payload", {})
 
-    # Supply alert: affected patients
     if trg_kind == "supply_alert":
         chronic = cust_agg.get("chronic_rx_count", 0)
         batches = trg_payload.get("affected_batches", [])
         estimated = min(round(chronic * 0.09 * len(batches)), chronic)
-        facts["affected_chronic_patients"] = (
-            f"~{estimated} of your {chronic} chronic-Rx patients likely dispensed affected batch(es)"
-        )
+        facts["affected_chronic_patients"] = f"~{estimated} of your {chronic} chronic-Rx patients likely dispensed affected batch(es)"
+        if batches:
+            facts["affected_batch_ids"] = ", ".join(str(b) for b in batches[:3])
 
-    # Perf delta
     delta_7d = perf.get("delta_7d", {})
     if trg_kind in ("perf_dip", "perf_spike", "seasonal_perf_dip"):
         metric = trg_payload.get("metric", "calls")
@@ -273,13 +260,11 @@ def _derive_facts(category: dict, merchant: dict, trigger: dict, customer: dict 
         if delta and baseline:
             direction = "up" if delta > 0 else "down"
             facts["perf_signal"] = f"{metric} {direction} {abs(delta)*100:.0f}% this week (baseline: {baseline})"
-            # Translate to weekly loss/gain
-            if delta < 0 and baseline:
-                lost_per_week = round(abs(baseline * delta) / 4)
-                if lost_per_week > 0:
-                    facts["weekly_loss"] = f"~{lost_per_week} fewer {metric} per week vs normal"
+            if delta < 0:
+                lost = round(abs(baseline * delta) / 4)
+                if lost > 0:
+                    facts["weekly_loss"] = f"~{lost} fewer {metric} per week vs normal"
 
-    # Renewal urgency
     sub = merchant.get("subscription", {})
     days_rem = sub.get("days_remaining") or trg_payload.get("days_remaining")
     if trg_kind == "renewal_due" and days_rem:
@@ -289,24 +274,24 @@ def _derive_facts(category: dict, merchant: dict, trigger: dict, customer: dict 
             + (f" -- renewal Rs.{amount}" if amount else "")
         )
 
-    # Customer recall
     if customer and trg_kind in ("recall_due", "chronic_refill_due"):
         rel = customer.get("relationship", {})
         last_visit = rel.get("last_visit") or trg_payload.get("last_refill")
         slots = trg_payload.get("available_slots", [])
         slot_labels = [s.get("label") for s in slots[:2] if s.get("label")]
+        cust_name = customer.get("identity", {}).get("name", "")
+        parts = [f"Patient: {cust_name}"] if cust_name else []
         if last_visit:
-            facts["recall_info"] = f"Last visit: {last_visit}" + (
-                f" | Open slots: {', '.join(slot_labels)}" if slot_labels else ""
-            )
+            parts.append(f"last visit {last_visit}")
+        if slot_labels:
+            parts.append(f"open slots: {', '.join(slot_labels)}")
+        if parts:
+            facts["recall_info"] = " | ".join(parts)
 
-    # Research digest: pre-lookup exact study
     if trg_kind == "research_digest":
         top_item_id = trg_payload.get("top_item_id") or trg_payload.get("item_id")
         digest_items = category.get("digest", [])
-        match = None
-        if top_item_id:
-            match = next((d for d in digest_items if d.get("id") == top_item_id), None)
+        match = next((d for d in digest_items if d.get("id") == top_item_id), None) if top_item_id else None
         if not match and digest_items:
             match = digest_items[0]
         if match:
@@ -317,29 +302,56 @@ def _derive_facts(category: dict, merchant: dict, trigger: dict, customer: dict 
                 parts.append(f"n={match['trial_n']}")
             if match.get("delta_pct") is not None:
                 parts.append(f"delta={match['delta_pct']}%")
-            if match.get("title"):
-                parts.append(f"Title: {match['title']}")
             if match.get("patient_segment"):
                 parts.append(f"Segment: {match['patient_segment']}")
+            if match.get("title"):
+                parts.append(f"Title: {match['title'][:80]}")
             if match.get("actionable"):
-                parts.append(f"Action: {match['actionable']}")
+                parts.append(f"Actionable: {match['actionable'][:80]}")
             if parts:
                 facts["cited_study"] = " | ".join(parts)
 
-    # Winback
     if trg_kind == "winback_eligible":
-        days_exp = trg_payload.get("days_since_expiry")
-        dip = trg_payload.get("perf_dip_pct")
-        lapsed_since = trg_payload.get("lapsed_customers_since_expiry")
         parts = []
-        if days_exp:
-            parts.append(f"{days_exp} days since expiry")
-        if dip:
-            parts.append(f"perf dip {abs(dip)*100:.0f}%")
-        if lapsed_since:
-            parts.append(f"{lapsed_since} customers lapsed since")
+        if trg_payload.get("days_since_expiry"):
+            parts.append(f"{trg_payload['days_since_expiry']} days since expiry")
+        if trg_payload.get("perf_dip_pct"):
+            parts.append(f"perf dip {abs(trg_payload['perf_dip_pct'])*100:.0f}%")
+        if trg_payload.get("lapsed_customers_since_expiry"):
+            parts.append(f"{trg_payload['lapsed_customers_since_expiry']} customers lapsed since")
         if parts:
             facts["winback_signal"] = " | ".join(parts)
+
+    if trg_kind == "competitor_opened":
+        parts = []
+        if trg_payload.get("distance_km"):
+            parts.append(f"{trg_payload['distance_km']} km away")
+        if trg_payload.get("competitor_offer"):
+            parts.append(f"their offer: {trg_payload['competitor_offer']}")
+        if trg_payload.get("your_offer"):
+            parts.append(f"your offer: {trg_payload['your_offer']}")
+        if parts:
+            facts["competitor_signal"] = " | ".join(parts)
+
+    if trg_kind == "gbp_unverified":
+        parts = []
+        if trg_payload.get("estimated_uplift_pct"):
+            parts.append(f"~{trg_payload['estimated_uplift_pct']*100:.0f}% uplift potential")
+        if trg_payload.get("time_to_complete_min"):
+            parts.append(f"{trg_payload['time_to_complete_min']} min to complete")
+        if parts:
+            facts["gbp_signal"] = " | ".join(parts)
+
+    if trg_kind == "review_theme_emerged":
+        parts = []
+        if trg_payload.get("theme"):
+            parts.append(f"theme: {trg_payload['theme']}")
+        if trg_payload.get("occurrence_count"):
+            parts.append(f"{trg_payload['occurrence_count']} mentions")
+        if trg_payload.get("common_quote"):
+            parts.append(f"quote: '{trg_payload['common_quote'][:80]}'")
+        if parts:
+            facts["review_signal"] = " | ".join(parts)
 
     return facts
 
@@ -369,7 +381,7 @@ def _extract_context(category: dict, merchant: dict, trigger: dict, customer: di
             "peer_stats": category.get("peer_stats", {}),
             "top_digest": category.get("digest", [])[:2],
             "seasonal_beats": category.get("seasonal_beats", [])[:2],
-            "offer_catalog": category.get("offer_catalog", [])[:3],
+            "offer_catalog": category.get("offer_catalog", [])[:4],
             "trend_signals": category.get("trend_signals", [])[:2],
             "taboos": voice.get("vocab_taboo", [])[:3],
         },
@@ -407,12 +419,11 @@ def _extract_context(category: dict, merchant: dict, trigger: dict, customer: di
 
     return (
         json.dumps(ctx, ensure_ascii=False, indent=2)
-        + "\n\nCompose for THIS merchant. Use DERIVED_FACTS numbers. Translate gaps to business impact (missed bookings/patients/covers per week). Add time bound to CTA."
+        + "\n\nCompose the message NOW. Cite DERIVED_FACTS values verbatim. Hit density: 5+ numbers, 3+ domain terms, peer comparison, time-bound CTA."
     )
 
 
 def _parse_json_fallback(text: str) -> dict:
-    """Fallback text parser if tool use block not found."""
     text = text.strip()
     if text.startswith("```"):
         lines = text.split("\n")
@@ -421,17 +432,16 @@ def _parse_json_fallback(text: str) -> dict:
 
 
 def compose(category: dict, merchant: dict, trigger: dict, customer: dict | None = None) -> dict:
-    """Compose at temperature=0 using tool-use for guaranteed JSON."""
+    """Deterministic compose. Returns {body, cta, send_as, suppression_key, rationale}."""
     client = _get_client()
-    category_slug = category.get("slug", "")
-    system_prompt = _get_system(category_slug)
+    system_prompt = _get_system(category.get("slug", ""))
     user_content = _extract_context(category, merchant, trigger, customer)
 
     response = client.converse(
         modelId=MODEL,
         system=[{"text": system_prompt}],
         messages=[{"role": "user", "content": [{"text": user_content}]}],
-        inferenceConfig={"temperature": 0, "maxTokens": 700},
+        inferenceConfig={"temperature": 0, "maxTokens": 800},
         toolConfig={
             "tools": COMPOSE_TOOL,
             "toolChoice": {"tool": {"name": "compose_message"}},
@@ -441,9 +451,9 @@ def compose(category: dict, merchant: dict, trigger: dict, customer: dict | None
     content_blocks = response["output"]["message"]["content"]
     tool_block = next((b for b in content_blocks if "toolUse" in b), None)
     if tool_block:
-        result = tool_block["toolUse"]["input"]
+        result = dict(tool_block["toolUse"]["input"])
     else:
-        text = content_blocks[0].get("text", "")
+        text = content_blocks[0].get("text", "") if content_blocks else ""
         if not text:
             raise ValueError("Bedrock returned empty content")
         result = _parse_json_fallback(text)

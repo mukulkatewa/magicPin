@@ -20,7 +20,7 @@ def _get_client():
         )
     return _bedrock
 
-MODEL = os.environ.get("BEDROCK_NOVA_MODEL_ID", "amazon.nova-lite-v1:0")
+MODEL = os.environ.get("BEDROCK_NOVA_MODEL_ID", "amazon.nova-pro-v1:0")
 
 
 # Auto-reply fingerprints — common WhatsApp Business canned replies

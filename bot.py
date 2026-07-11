@@ -74,7 +74,7 @@ async def metadata():
     return {
         "team_name": "Vera Engine",
         "team_members": ["Rajesh"],
-        "model": "openrouter/anthropic/claude-3-haiku",
+        "model": "bedrock/amazon.nova-pro-v1:0",
         "approach": (
             "LLM composer (temperature=0) with structured prompt. "
             "Parallel async tick — all triggers composed simultaneously. "
