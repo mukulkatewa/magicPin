@@ -24,19 +24,19 @@ Author: magicpin AI Challenge Team
 BOT_URL = "http://localhost:8080"
 
 # Choose your LLM provider: "openai", "anthropic", "gemini", "deepseek", "groq", "ollama", "openrouter"
-LLM_PROVIDER = "openai"
+LLM_PROVIDER = "openrouter"
 
 # Your API key (paste your key here)
-LLM_API_KEY = ""  # <-- PUT YOUR API KEY HERE
+LLM_API_KEY = ""  # set OPENROUTER_API_KEY in .env or paste here
 
 # Model to use (leave empty for default, or specify like "gpt-4o", "claude-3-5-sonnet-20241022", etc.)
-LLM_MODEL = ""  # <-- Optional: specify model or leave empty for default
+LLM_MODEL = "anthropic/claude-3-haiku"  # fast + cheap on OpenRouter
 
 # For Ollama only: local server URL
 OLLAMA_URL = "http://localhost:11434"
 
 # Which test to run by default
-TEST_SCENARIO = "all"
+TEST_SCENARIO = "full_evaluation"
 
 # =============================================================================
 # ██████  END OF CONFIGURATION - DON'T EDIT BELOW THIS LINE ██████
@@ -54,6 +54,18 @@ from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
 from urllib import request as urlrequest, error as urlerror
 from abc import ABC, abstractmethod
+
+# Auto-load .env from project root if LLM_API_KEY not set above
+if not LLM_API_KEY:
+    _env_paths = [Path(__file__).parent.parent / ".env", Path(".env")]
+    for _ep in _env_paths:
+        if _ep.exists():
+            for _line in _ep.read_text().splitlines():
+                if _line.startswith("OPENROUTER_API_KEY="):
+                    LLM_API_KEY = _line.split("=", 1)[1].strip()
+                    break
+            if LLM_API_KEY:
+                break
 
 # Constants
 TIMEOUT_LLM = 45
