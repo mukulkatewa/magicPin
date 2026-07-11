@@ -23,18 +23,16 @@ Author: magicpin AI Challenge Team
 # Your bot's URL (where your bot is running)
 BOT_URL = "http://localhost:8080"
 
-# Choose your LLM provider: "openai", "anthropic", "gemini", "deepseek", "groq", "ollama", "openrouter"
-LLM_PROVIDER = "openrouter"
+# Choose your LLM provider: "openai", "anthropic", "gemini", "deepseek", "groq", "ollama", "openrouter", "bedrock"
+LLM_PROVIDER = "bedrock"
 
-# Your API key (paste your key here)
-LLM_API_KEY = ""  # set OPENROUTER_API_KEY in .env or paste here
+# Your API key (openrouter key). For "bedrock" provider we read AWS keys from .env instead.
+LLM_API_KEY = ""
 
-# Model to use. IMPORTANT: default openrouter model is claude-3-haiku which at temp=0.2
-# frequently fails to escape inner quotes when writing rationale strings, causing
-# json.loads() to crash and fall back to {spec: 10, rest: 5} = 30/50 fake scores.
-# We use gpt-4o-mini locally: cheap, no JSON escape bugs, consistent scoring.
-# NOTE: this only affects LOCAL scoring signal. magicpin's real judge uses their own model.
-LLM_MODEL = "openai/gpt-4o-mini"
+# Model to use. For "bedrock" provider this is the Bedrock model ID.
+# We use Nova Pro for the judge -- reliable JSON output, no Haiku-style escape bugs.
+# NOTE: this only affects LOCAL scoring. magicpin's real judge uses their own model.
+LLM_MODEL = "amazon.nova-pro-v1:0"
 
 # For Ollama only: local server URL
 OLLAMA_URL = "http://localhost:11434"
@@ -59,17 +57,19 @@ from pathlib import Path
 from urllib import request as urlrequest, error as urlerror
 from abc import ABC, abstractmethod
 
-# Auto-load .env from project root if LLM_API_KEY not set above
-if not LLM_API_KEY:
-    _env_paths = [Path(__file__).parent.parent / ".env", Path(".env")]
-    for _ep in _env_paths:
-        if _ep.exists():
-            for _line in _ep.read_text().splitlines():
-                if _line.startswith("OPENROUTER_API_KEY="):
-                    LLM_API_KEY = _line.split("=", 1)[1].strip()
-                    break
-            if LLM_API_KEY:
-                break
+# Auto-load .env from project root (OPENROUTER + AWS keys)
+_env_paths = [Path(__file__).parent.parent / ".env", Path(".env")]
+for _ep in _env_paths:
+    if _ep.exists():
+        for _line in _ep.read_text().splitlines():
+            if "=" in _line and not _line.strip().startswith("#"):
+                _k, _v = _line.split("=", 1)
+                _v = _v.strip().strip('"').strip("'")
+                if _k == "OPENROUTER_API_KEY" and not LLM_API_KEY:
+                    LLM_API_KEY = _v
+                elif _k.startswith("AWS_") or _k.startswith("BEDROCK_"):
+                    os.environ.setdefault(_k, _v)
+        break
 
 # Constants
 TIMEOUT_LLM = 45
@@ -315,6 +315,36 @@ class OllamaProvider(LLMProvider):
         return data["response"]
 
 
+class BedrockProvider(LLMProvider):
+    """AWS Bedrock via boto3 Converse API. Reads AWS_* creds from environment."""
+    def __init__(self, model: str = ""):
+        self.model = model or "amazon.nova-pro-v1:0"
+        try:
+            import boto3
+        except ImportError:
+            raise RuntimeError("boto3 not installed. Run: pip install boto3")
+        self._client = boto3.client(
+            "bedrock-runtime",
+            region_name=os.environ.get("AWS_REGION", "us-east-1"),
+            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+        )
+
+    def name(self) -> str:
+        return f"Bedrock ({self.model})"
+
+    def complete(self, prompt: str, system: str = None) -> str:
+        kwargs = {
+            "modelId": self.model,
+            "messages": [{"role": "user", "content": [{"text": prompt}]}],
+            "inferenceConfig": {"temperature": 0.2, "maxTokens": 1500},
+        }
+        if system:
+            kwargs["system"] = [{"text": system}]
+        resp = self._client.converse(**kwargs)
+        return resp["output"]["message"]["content"][0]["text"]
+
+
 class OpenRouterProvider(LLMProvider):
     def __init__(self, api_key: str, model: str = ""):
         self.api_key = api_key
@@ -351,6 +381,7 @@ def create_provider() -> LLMProvider:
         "groq": lambda: GroqProvider(LLM_API_KEY, LLM_MODEL),
         "ollama": lambda: OllamaProvider(LLM_MODEL, OLLAMA_URL),
         "openrouter": lambda: OpenRouterProvider(LLM_API_KEY, LLM_MODEL),
+        "bedrock": lambda: BedrockProvider(LLM_MODEL),
     }
 
     if LLM_PROVIDER not in providers:
@@ -939,7 +970,7 @@ def main():
     print_header("magicpin AI Challenge — LLM Judge")
 
     # Validate configuration
-    if LLM_PROVIDER != "ollama" and not LLM_API_KEY:
+    if LLM_PROVIDER not in ("ollama", "bedrock") and not LLM_API_KEY:
         print_fail("LLM_API_KEY is not set!")
         print_info("Edit the CONFIGURATION section at the top of this file")
         print_info("Set your API key for your chosen provider")
