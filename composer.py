@@ -10,7 +10,7 @@ from openai import OpenAI
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 # claude-3.5-haiku: better quality than 3-haiku, still fast enough for parallel calls
-MODEL = "anthropic/claude-3.5-haiku"
+MODEL = "anthropic/claude-3-haiku"
 
 _client: OpenAI | None = None
 
