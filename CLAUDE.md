@@ -157,6 +157,50 @@ Kya sahi: 3 real numbers (2100, 38%, 124), source citation, merchant ki specific
 
 ---
 
+### Iteration 3 — Score 76% → target 90%+ (YEH WALA ITERATION)
+
+**Score analysis after Iteration 2:**
+- Specificity: 8/10 ✓
+- Category Fit: 7/10 ← WEAKEST (generic tone, wrong vocab)
+- Merchant Fit: 8/10 ✓
+- Decision Quality: 8/10 ✓
+- Engagement: 7/10 ← WEAKEST (asking "Want me to?" instead of "Maine kar diya")
+
+**Bug 4: Race condition — same message sent twice to Anjali** ❌
+- **Kya tha:** `asyncio.gather()` se parallel compose → dono triggers ne body-hash check kiya BEFORE either wrote to `last_body`
+- **Result:** Same CTR message Anjali ko twice gaya, judge ne -2 penalty diya
+- **Fix:** `tick()` mein gather ke baad `seen_merchants` set se dedup karo
+
+**Bug 5: JSON control chars still failing on 3 triggers** ❌
+- **Kya tha:** Regex se strip karna enough nahi tha — chars JSON string values ke andar the
+- **Fix:** `json.loads(raw, strict=False)` — Python ka built-in permissive parser, control chars allow karta hai strings mein
+
+**Bug 6: NoneType on trg_022** ❌  
+- **Kya tha:** LLM ne `None` content return kiya (empty response)
+- **Fix:** `if not content: raise ValueError(...)` — explicit check, clean error
+
+**Category Fit 7→9 fix:**
+- System prompt mein per-category vocabulary checklist add kiya
+- Model upgrade: `claude-3-haiku` → `claude-3.5-haiku` (better instruction following)
+- "Use ≥2 words/phrases from this list" — mandatory vocabulary enforcement
+
+**Engagement 7→9 fix:**
+- "Want me to do X?" se shift kiya "Maine X ready kar diya — sirf YES"
+- 4 engagement formulas diye: PRE-LOAD / LOSS ANCHOR / CURIOSITY GAP / BINARY COMMIT
+- LLM ko force kiya ek specific formula pick karne ke liye
+
+**Derived facts pre-computation added (`_derive_facts()`):**
+- CTR gap % (e.g. "30% below peer avg") — LLM ko calculate nahi karna
+- Lapsed customer count — direct cite
+- Members at churn risk = total_members × monthly_churn_pct
+- Affected chronic patients for supply_alert = chronic_rx_count × 0.09 × batch_count
+- Renewal urgency string
+- Recall slot info
+
+Yeh derived facts context mein explicitly pass karte hain taaki LLM inhe directly cite kare — no arithmetic, no hallucination.
+
+---
+
 ## Commands
 
 ```bash

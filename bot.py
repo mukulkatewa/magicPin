@@ -187,18 +187,25 @@ class TickBody(BaseModel):
 async def tick(body: TickBody):
     trg_ids = body.available_triggers[:20]  # cap at 20 per spec
 
-    # Run ALL trigger compositions in parallel — this is the critical fix.
-    # Sequential: 5 triggers × 3s/LLM = 15s (judge times out at 15s)
-    # Parallel:   5 triggers all at once → ~3s total
+    # Run ALL trigger compositions in parallel
+    # Sequential: 5 × 3s = 15s (judge times out). Parallel: ~3s total.
     results = await asyncio.gather(
         *[_process_trigger(tid) for tid in trg_ids],
         return_exceptions=True,
     )
 
+    # Deduplicate by merchant_id — parallel compose can race on body-hash check.
+    # Keep first valid action per merchant (preserves the best trigger ordering).
     actions = []
+    seen_merchants: set[str] = set()
     for r in results:
-        if r and isinstance(r, dict):
-            actions.append(r)
+        if not r or not isinstance(r, dict):
+            continue
+        mid = r.get("merchant_id")
+        if mid in seen_merchants:
+            continue
+        seen_merchants.add(mid)
+        actions.append(r)
 
     return {"actions": actions}
 
