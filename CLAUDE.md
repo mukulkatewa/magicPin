@@ -548,6 +548,57 @@ Same message can crash one run and score 43 the next. Pure Haiku randomness.
 
 ---
 
+### Iteration 11 — Language pref + trigger-data primacy + chain-of-thought
+
+**Cold analysis of iter 10 run (all 14 messages scored, no throttle):**
+- Real average: 561/14 = 40.07/50 = 80% (display 76% is quirk)
+- Pattern found in weak scores:
+  - Dr Meera, Dr Bharat, Ramesh, Vikas all got Merchant Fit = 7 -- their messages were mostly English
+  - Anjali, Padma (salons with Hinglish) got MF = 9
+  - Judge rubric literally says "MERCHANT FIT... honors language preference"
+- DQ = 6 pattern: Lakshmi festival, Padma seasonal_dip, Suresh review -- messages led with CTR gap
+  instead of the trigger's actual data (composer defaulted to CTR because it's always in DERIVED_FACTS)
+- "delivery_late" (snake_case) leaked verbatim into a message body -> DQ hit
+
+**Fixes iter 11:**
+
+**Fix 1: Hinglish enforcement for dentist + pharmacy** ✅
+- Dentist prompt: "Even in clinical tone, Hinglish REQUIRED when languages includes hi"
+- Pharmacy prompt: same
+- These were the two categories where messages were going full English
+- Expected: MF 7 -> 9 for dentist/pharmacy messages
+
+**Fix 2: Trigger-data primacy in _BASE prompt** ✅
+- Explicit rule: "The FIRST number cited must come from the trigger's own payload"
+- Table mapping every trigger kind -> which DERIVED_FACTS field to lead with
+- "Never lead with CTR gap for research_digest / festival / supply / review / spike / recall"
+- Expected: DQ 6 -> 8+ for festival/review/spike/dip triggers
+
+**Fix 3: Chain-of-thought reasoning order** ✅
+- 5-step REASONING ORDER block at top of _BASE (Nova Pro follows this well)
+- Step 1: identify trigger urgency
+- Step 2: map trigger to derived fact
+- Step 3: check language preference
+- Step 4: pick 3 domain terms
+- Step 5: write body in correct order
+
+**Fix 4: Snake_case humanization** ✅
+- review_signal derived fact: "delivery_late" -> "late delivery"
+- Reversal logic when last token is late/slow/cold/wrong/missing
+- "customers say:" prefix instead of quote marks (avoid judge parse risk)
+
+**Fix 5: Bot back on Nova Pro with tighter semaphore** ✅
+- Model: nova-pro-v1:0 (better instruction following)
+- Semaphore(2) prevents throttling with judge co-load
+- Adaptive retry catches any burst
+
+**Realistic target after iter 11: 85-88% displayed, 87-90% real.**
+
+Why not 95%: Nova Pro judge is inherently strict. Same message on identical prompt scores 39 one
+run and 43 another (temperature=0.2 noise). The judge itself becomes the ceiling.
+
+---
+
 ## Commands
 
 ```bash

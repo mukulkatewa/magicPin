@@ -37,7 +37,7 @@ SUPPRESS_TTL = 120   # 2 min — short so back-to-back judge runs don't collide
 
 # Cap concurrent Bedrock calls per tick — Nova Lite handles 3 parallel fine,
 # 5 sometimes throttles when judge is also hitting Bedrock in parallel.
-_compose_gate = asyncio.Semaphore(3)
+_compose_gate = asyncio.Semaphore(2)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
