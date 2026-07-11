@@ -29,8 +29,12 @@ LLM_PROVIDER = "openrouter"
 # Your API key (paste your key here)
 LLM_API_KEY = ""  # set OPENROUTER_API_KEY in .env or paste here
 
-# Model to use (leave empty for default, or specify like "gpt-4o", "claude-3-5-sonnet-20241022", etc.)
-LLM_MODEL = ""  # leave empty — OpenRouter picks default for the provider
+# Model to use. IMPORTANT: default openrouter model is claude-3-haiku which at temp=0.2
+# frequently fails to escape inner quotes when writing rationale strings, causing
+# json.loads() to crash and fall back to {spec: 10, rest: 5} = 30/50 fake scores.
+# We use claude-3.5-sonnet locally for reliable scoring signal. This only affects
+# local testing -- magicpin's real judge harness uses their own model.
+LLM_MODEL = "anthropic/claude-3.5-sonnet"
 
 # For Ollama only: local server URL
 OLLAMA_URL = "http://localhost:11434"
