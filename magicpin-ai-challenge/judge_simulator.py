@@ -321,6 +321,7 @@ class BedrockProvider(LLMProvider):
         self.model = model or "amazon.nova-pro-v1:0"
         try:
             import boto3
+            from botocore.config import Config
         except ImportError:
             raise RuntimeError("boto3 not installed. Run: pip install boto3")
         self._client = boto3.client(
@@ -328,6 +329,7 @@ class BedrockProvider(LLMProvider):
             region_name=os.environ.get("AWS_REGION", "us-east-1"),
             aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
             aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+            config=Config(retries={"max_attempts": 6, "mode": "adaptive"}, read_timeout=40),
         )
 
     def name(self) -> str:

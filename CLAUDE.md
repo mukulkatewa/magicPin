@@ -497,6 +497,57 @@ Same message can crash one run and score 43 the next. Pure Haiku randomness.
 
 ---
 
+### Iteration 10 — Throttling fix + weak-dimension prompt sharpening
+
+**Cold analysis of last run:**
+- Judge upgraded to Nova Pro -> zero fake crashes (huge win)
+- Only 10 of 14 messages scored -> 4 died to ThrottlingException
+- Real message average: 391/10 = 39.1/50 = 78%
+- Display shows 72% because judge sums integer-truncated dimension averages
+- Weakest dimensions consistently: Category Fit (7) + Decision Quality (7)
+
+**Why throttling happened:**
+- Bot uses Nova Pro (5 parallel calls per tick)
+- Judge uses Nova Pro (concurrent, scoring)
+- Same account, same model, same region -> hit Nova Pro RPM quota
+- Boto3 default retries (4x) ran out for 4 triggers
+
+**Fix strategy (senior-dev split):**
+
+**Fix 1: Model split -- bot Nova Lite, judge Nova Pro** ✅
+- Bot: `amazon.nova-lite-v1:0` (higher RPM quota, fast, adequate for our prompts)
+- Judge: `amazon.nova-pro-v1:0` (stricter scoring, low volume so no throttle)
+- Prevents them from competing for the same rate quota
+
+**Fix 2: Adaptive retries + concurrency gate** ✅
+- Bot Bedrock client: `Config(retries={mode: adaptive, max_attempts: 8})`
+- Judge Bedrock client: `Config(retries={mode: adaptive, max_attempts: 6})`
+- `bot.py` semaphore caps concurrent compose calls at 3 (was 5)
+- Adaptive mode uses AWS's official token-bucket backoff instead of naive retries
+
+**Fix 3: Category Fit 7->9 (mandatory 3+ vocab)** ✅
+- Salon/restaurant/gym prompts now say "MUST use at least 3 from this list"
+- Expanded vocab lists so LLM has more terms to pick from
+- Explicit count requirement (was 2-3, now strictly 3+)
+
+**Fix 4: Decision Quality 7->9 (why-NOW map)** ✅
+- Added explicit WHY-NOW MAP in _BASE prompt covering all 16 trigger kinds
+- Each trigger has a specific "why now" phrasing to include
+- Judge scored Diwali message DQ=6 because 188 days out doesn't feel urgent
+  -> now: "advance-booking window opens NOW; peers already loading offers"
+
+**Fix 5: Density bumped 4->5 requirements** ✅
+- Added #4: "explicit WHY NOW phrase" as a hard requirement alongside numbers/vocab/CTA
+
+**Expected outcome:**
+- No throttled triggers -> 14/14 messages scored
+- CF avg 7->8-9 (mandatory 3+ vocab)
+- DQ avg 7->8-9 (why-NOW map)
+- Nova Pro judge, no crashes -> real signal
+- Realistic target: 82-88% with Nova Lite bot vs Nova Pro judge
+
+---
+
 ## Commands
 
 ```bash

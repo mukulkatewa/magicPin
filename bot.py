@@ -35,6 +35,10 @@ last_body: dict[str, str] = {}                    # merchant_id → last body ha
 
 SUPPRESS_TTL = 120   # 2 min — short so back-to-back judge runs don't collide
 
+# Cap concurrent Bedrock calls per tick — Nova Lite handles 3 parallel fine,
+# 5 sometimes throttles when judge is also hitting Bedrock in parallel.
+_compose_gate = asyncio.Semaphore(3)
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _now_iso() -> str:
@@ -142,9 +146,11 @@ async def _process_trigger(trg_id: str) -> dict | None:
     customer = _get_ctx("customer", customer_id) if customer_id else None
 
     try:
-        # asyncio.to_thread runs the blocking LLM call in a thread pool
-        # so it doesn't block the event loop — this is what makes parallelism work
-        result = await asyncio.to_thread(compose, category, merchant, trg, customer)
+        # asyncio.to_thread runs the blocking LLM call in a thread pool so it
+        # doesn't block the event loop. Semaphore caps concurrent Bedrock calls
+        # to stay within Nova Lite rate limits even under judge co-load.
+        async with _compose_gate:
+            result = await asyncio.to_thread(compose, category, merchant, trg, customer)
     except Exception as exc:
         print(f"[tick] compose failed for {trg_id}: {exc}")
         return None

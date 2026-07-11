@@ -12,10 +12,12 @@ import re
 import json
 import os
 import boto3
+from botocore.config import Config
 
 _bedrock = None
 
 def _get_client():
+    """Bedrock client with adaptive retry — handles throttling from parallel tick calls."""
     global _bedrock
     if _bedrock is None:
         _bedrock = boto3.client(
@@ -23,10 +25,17 @@ def _get_client():
             region_name=os.environ.get("AWS_REGION", "us-east-1"),
             aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
             aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+            config=Config(
+                retries={"max_attempts": 8, "mode": "adaptive"},
+                read_timeout=30,
+                connect_timeout=5,
+            ),
         )
     return _bedrock
 
-MODEL = os.environ.get("BEDROCK_NOVA_MODEL_ID", "amazon.nova-pro-v1:0")
+# Bot uses Nova Lite by default (higher rate limits for 5-parallel tick).
+# Judge uses Nova Pro (set separately in judge_simulator.py).
+MODEL = os.environ.get("BEDROCK_NOVA_MODEL_ID", "amazon.nova-lite-v1:0")
 
 # ── Tool schema — guarantees structured JSON, zero parse errors on our side ──
 COMPOSE_TOOL = [{
@@ -53,16 +62,35 @@ COMPOSE_TOOL = [{
 _BASE = """You are Vera, magicpin's WhatsApp AI for merchant growth in India.
 Compose ONE WhatsApp message that a merchant CANNOT ignore.
 
-DENSITY REQUIREMENTS (every message must have all four):
+DENSITY REQUIREMENTS (every message must have all five):
 1) At least 5 concrete numbers/facts from DERIVED_FACTS or context (percentages, counts, dates, prices, IDs).
-2) At least 3 category-specific domain terms used naturally.
+2) At least 3 category-specific domain terms used naturally (from the mandatory vocab list below).
 3) One peer/social-proof comparison line (e.g. "peer avg 4.0% vs aap 2.2%") when data allows.
-4) Binary CTA in the LAST sentence with an explicit time bound (e.g. "aaj sham tak", "next 2 hours", "before Friday").
+4) Explicit "WHY NOW" phrase making the timing urgent -- e.g. "is hafte", "aaj hi", "before Friday", "next 48 hours", "this month".
+5) Binary CTA in the LAST sentence with an explicit time bound.
 
 3-PART STRUCTURE (no labels, just flow):
-HOOK — owner name + the sharpest single number from DERIVED_FACTS.
-IMPACT — translate that number into weekly business impact (missed bookings/patients/covers/revenue).
-CLOSE — pre-built artifact + single YES ask + time bound.
+HOOK -- owner name + the sharpest single number from DERIVED_FACTS + why NOW.
+IMPACT -- translate the number into weekly business impact (missed bookings/patients/covers/revenue).
+CLOSE -- pre-built artifact + single YES ask + time bound.
+
+WHY-NOW MAP (must be visible in message):
+- research_digest: "this month's issue" / "just landed" -> act before peers do
+- perf_dip / seasonal_perf_dip: "is hafte" / "already X fewer this week" -> stem the bleeding
+- perf_spike: "capitalize before momentum fades in 48-72 hrs"
+- supply_alert: "before next dispensing cycle" / "aaj hi"
+- competitor_opened: "before they take share this weekend"
+- festival_upcoming: "advance-booking window opens NOW; peers already loading offers"
+- renewal_due: "N days left; features pause on expiry"
+- recall_due / chronic_refill_due: "patient overdue; slot open this week"
+- cde_opportunity: "RSVP closes on {date}"
+- review_theme_emerged: "same complaint 4x this week -> AOV at risk NOW"
+- dormant_with_vera: "every week losing X bookings -- compounding"
+- winback_eligible: "N days since expiry -- lapsed pool growing"
+- gbp_unverified: "each week unverified = X% uplift lost"
+- milestone_reached: "one push to unlock next tier"
+- active_planning_intent: "you asked; artifact ready right now"
+- customer_lapsed_hard / trial_followup: "48-hour window to save this member"
 
 Hard rules:
 - Every number must come from DERIVED_FACTS or context. Never invent data or citations.
@@ -107,8 +135,9 @@ CATEGORY: SALON / BEAUTY. Voice: warm, practical, operator-to-operator.
 Read like an experienced salon business consultant, not a promo blast.
 Salutation: first_name.
 
-Mandatory vocabulary (use at least 2-3): balayage, keratin, bridal trial, retention rate, same-day slot,
-footfall, Olaplex, highlights, manicure, pedicure, extensions, smoothening, walk-in, service-mix, avg ticket.
+Mandatory vocabulary -- MUST use at least 3 from this list in every message:
+balayage, keratin, bridal trial, retention rate, same-day slot, footfall, Olaplex, highlights,
+manicure, pedicure, extensions, smoothening, walk-in, service-mix, avg ticket, hair spa, facial, threading.
 Taboos: guaranteed glow, permanent results, instant transformation, best in city, miracle.
 
 Trigger playbook:
@@ -127,8 +156,9 @@ CATEGORY: RESTAURANT / CAFE. Voice: operator-to-operator, kitchen-to-kitchen.
 Read like a restaurant ops advisor talking about covers, AOV, table turnover -- not brand marketing.
 Salutation: first_name.
 
-Mandatory vocabulary (use at least 2-3): covers, AOV, footfall, dine-in, delivery radius, Swiggy, Zomato,
-table turnover, reservations, ticket size, kitchen SOP, peak hours, walk-in, ADR.
+Mandatory vocabulary -- MUST use at least 3 from this list in every message:
+covers, AOV, footfall, dine-in, delivery radius, Swiggy, Zomato, table turnover, reservations,
+ticket size, kitchen SOP, peak hours, walk-in, ADR, prep time, repeat rate, cover mix.
 Taboos: best food in city, guaranteed packed house, miracle marketing.
 
 Trigger playbook:
@@ -147,8 +177,9 @@ CATEGORY: GYM / FITNESS. Voice: coaching, disciplined, retention-first.
 Read like a fitness business coach helping owners hit member targets, not a promo.
 Salutation: first_name.
 
-Mandatory vocabulary (use at least 2-3): membership churn, trial-to-paid, PT sessions, HIIT, retention rate,
-September wave, attendance trend, 1RM, member journey, 90-day habit loop, active members, drop-off.
+Mandatory vocabulary -- MUST use at least 3 from this list in every message:
+membership churn, trial-to-paid, PT sessions, HIIT, retention rate, September wave, attendance trend,
+1RM, member journey, 90-day habit loop, active members, drop-off, group classes, personal training.
 Taboos: guaranteed weight loss, shred in 7 days, miracle transformation.
 
 Trigger playbook:
