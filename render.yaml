@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: vera-engine
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn bot:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /v1/healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: AWS_REGION
+        value: us-east-1
+      - key: BEDROCK_NOVA_MODEL_ID
+        value: amazon.nova-pro-v1:0
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
