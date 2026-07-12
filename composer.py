@@ -100,10 +100,11 @@ DENSITY REQUIREMENTS (every message must have all five):
 5) Binary CTA in the LAST sentence with a time bound.
 
 4-PART STRUCTURE (no labels, just flow):
-HOOK -- owner name + the sharpest single number from DERIVED_FACTS + why NOW.
+HOOK -- owner name + why-NOW in <=5 words + sharpest single number from DERIVED_FACTS.
 PEER LINE -- what peer merchants are doing / benchmark comparison (SOCIAL PROOF, mandatory when data allows).
 IF-YOU-DON'T-ACT -- quantified consequence of inaction (missed covers/patients/revenue in the next N days).
-CLOSE -- pre-built artifact + single YES ask + SPECIFIC deadline (e.g. "by 6pm tonight", "before Friday 6pm").
+CLOSE -- MUST match this template EXACTLY: "Maine [artifact] ready kar diya -- reply YES, [specific clock time]." No other content in the last sentence. No trailing questions.
+Clock time examples: "aaj sham 6 baje tak", "by 5:30pm today", "Friday 12 baje se pehle", "tonight before 10pm".
 
 ENGAGEMENT COMPULSION -- every message must have all four levers:
 1) Loss aversion: quantified "if not now, you lose X" statement.
@@ -538,6 +539,63 @@ def _extract_context(category: dict, merchant: dict, trigger: dict, customer: di
     )
 
 
+_TIME_RE = re.compile(
+    r"(\d{1,2}\s*(am|pm|baje)|(sham|raat|subah)\s+\d|"
+    r"tonight|today|aaj\s+(hi|sham|raat)|"
+    r"(mon|tue|wed|thu|fri|sat|sun)day|is\s+hafte)",
+    re.I,
+)
+
+def _quality_issues(body: str) -> list[str]:
+    """Fast rule-based check for the levers most correlated with judge Engagement/DQ scores."""
+    issues: list[str] = []
+    lower = body.lower()
+    if not any(k in lower for k in ("peer", "metro", "benchmark", "industry avg")):
+        issues.append("Missing peer/social-proof line")
+    if not re.search(r"\byes\b", body, re.I):
+        issues.append("Missing single-word YES CTA")
+    if len(re.findall(r"\d", body)) < 5:
+        issues.append("Fewer than 5 numeric tokens")
+    if not _TIME_RE.search(body):
+        issues.append("Missing specific-time deadline (clock/day)")
+    words = len(body.split())
+    if words < 55:
+        issues.append(f"Too short ({words} words, target 60-90)")
+    if words > 100:
+        issues.append(f"Too long ({words} words, target 60-90)")
+    # CLOSE line format: last sentence must have both "YES" and a time cue
+    last_sent = re.split(r"(?<=[.!?])\s+", body.strip())[-1] if body else ""
+    if last_sent and not (re.search(r"\byes\b", last_sent, re.I) and _TIME_RE.search(last_sent)):
+        issues.append("CLOSE line must end with 'reply YES, <clock time>.'")
+    return issues
+
+
+def _rewrite_body(system_prompt: str, ctx: str, draft: str, issues: list[str]) -> str:
+    """Second LLM pass — fixes weak levers without regenerating from scratch."""
+    client = _get_client()
+    user = (
+        f"CONTEXT:\n{ctx}\n\nDRAFT:\n{draft}\n\n"
+        f"ISSUES TO FIX (only these, keep all correct facts and structure):\n- "
+        + "\n- ".join(issues)
+        + "\n\nReturn the rewritten message via the tool. 60-90 words. Preserve owner name, "
+        "all numbers, peer benchmark and derived facts. Do NOT invent new data. "
+        "Final sentence template: 'Maine <artifact> ready kar diya -- reply YES, <clock time>.'"
+    )
+    resp = client.converse(
+        modelId=MODEL,
+        system=[{"text": system_prompt}],
+        messages=[{"role": "user", "content": [{"text": user}]}],
+        inferenceConfig={"temperature": 0, "maxTokens": 600},
+        toolConfig={
+            "tools": COMPOSE_TOOL,
+            "toolChoice": {"tool": {"name": "compose_message"}},
+        },
+    )
+    blocks = resp["output"]["message"]["content"]
+    tool = next((b for b in blocks if "toolUse" in b), None)
+    return tool["toolUse"]["input"]["body"] if tool else draft
+
+
 def _parse_json_fallback(text: str) -> dict:
     text = text.strip()
     if text.startswith("```"):
@@ -574,6 +632,16 @@ def compose(category: dict, merchant: dict, trigger: dict, customer: dict | None
         result = _parse_json_fallback(text)
 
     if result.get("body"):
+        # Lever 1: self-critique + rewrite only if rule-based check fails.
+        # Keeps latency in budget for messages already strong (most triggers).
+        issues = _quality_issues(result["body"])
+        if issues:
+            try:
+                fixed = _rewrite_body(system_prompt, user_content, result["body"], issues)
+                if fixed and len(fixed.split()) >= 40:
+                    result["body"] = fixed
+            except Exception as exc:
+                print(f"[rewrite] skipped: {exc}")
         result["body"] = _sanitize_body(result["body"])
 
     if not result.get("suppression_key"):

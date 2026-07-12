@@ -599,6 +599,60 @@ run and 43 another (temperature=0.2 noise). The judge itself becomes the ceiling
 
 ---
 
+### Iteration 14 — Self-critique rewriter + rule-gated + CLOSE-line template
+
+**Cold analysis of iter 13 run (14 messages scored):**
+- Total 577/14 = 41.2/50 = **82.4% real per-message avg**
+- Display 76% because judge floors each dim avg to integer:
+  - Spec 8.5 -> 8, CF 8.71 -> 8, MF 8.64 -> 8, DQ 7.71 -> 7, Eng 7.57 -> 7 = 38/50 (76%)
+- Iter 13 pushed real avg up but NOT enough to cross the integer floor -- three dims are within 0.3-0.5 pts of the next tier
+- Weakest still: DQ (7.71), Engagement (7.57)
+- E=7 pattern: correct 4-part structure, correct peer, but CLOSE line has trailing "let me know" / question / dilution
+- DQ=7 pattern: why-NOW not in the first 5 words
+
+**Redis kya karega? -- NOTHING for accuracy**
+Redis is a cache. Judge sends fresh triggers each run, cache never hits. Latency already fine
+(6s per batch under 15s budget). Redis add karna = zero score gain, extra failure surface. **Rejected.**
+
+**3 real levers implemented in iter 14:**
+
+**Lever 3 -- CLOSE line template (free, prompt-only)**
+- HOOK now requires "why-NOW in <=5 words" at the start
+- CLOSE line has an EXACT template: "Maine <artifact> ready kar diya -- reply YES, <clock time>."
+- Removes tail dilution ("kya lagta hai?", "let me know") that killed Engagement
+- Clock time examples baked in prompt
+
+**Lever 1 -- self-critique + rewrite pass (targeted, ~+2-4% expected)**
+- `_quality_issues(body)`: fast rule-based checks (peer line, YES, 5+ numbers, clock time, word count, CLOSE line format)
+- Only when a check fails, second Bedrock call rewrites the draft preserving facts
+- Most messages pass on first try -> no latency penalty; weak ones get fixed
+- Fallback-safe: on any rewrite exception, keeps original draft
+
+**Lever 2 -- best-of-N (folded into Lever 1)**
+- Separate best-of-N would 2x every call. Instead the rewrite pass IS the second sample,
+  targeted at what's actually weak. Same ROI at half the cost.
+
+**Concurrency tuning:**
+- Semaphore lowered 4 -> 3 (rewrite pass can add second call per trigger)
+- Adaptive retry still on for burst safety
+
+**Expected outcome:**
+- CLOSE-line enforcement + peer/YES/clock rule check -> Engagement floor 8+
+- why-NOW-first -> Decision Quality floor 8+
+- If both cross the integer floor: 8+8+8+8+8 = 40/50 = **80% displayed**, real ~85%
+- If Spec/CF/MF also nudge up: 42/50 = **84% displayed**, real ~87%
+
+**Interview one-liner:**
+
+> "The judge scores each dim then floors the mean to an integer. We were at
+> real 82% but display 76% because three dims were 0.3-0.5 pts short of the
+> next tier. Iter 14 targets those exact deltas: a strict CLOSE-line template
+> for Engagement, why-NOW-first for Decision Quality, and a rule-gated
+> self-critique rewriter that only fires when a message misses a required
+> lever -- so latency stays in budget."
+
+---
+
 ### Iteration 13 — 4-part structure + PEER LINE + IF-YOU-DON'T-ACT (Engagement 7.7 -> 9 target)
 
 **Cold analysis of iter 12 (split-provider run):**
