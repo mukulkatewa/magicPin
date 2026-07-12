@@ -599,6 +599,47 @@ run and 43 another (temperature=0.2 noise). The judge itself becomes the ceiling
 
 ---
 
+### Iteration 13 — 4-part structure + PEER LINE + IF-YOU-DON'T-ACT (Engagement 7.7 -> 9 target)
+
+**Cold analysis of iter 12 (split-provider run):**
+- 13 of 14 messages scored -- provider split worked, no more throttle timeouts
+- Real avg: 538/13 = 41.4/50 = **82.8%** (display shows 76% due to integer-floored dim avg)
+- Best individual: Ramesh 44/50, Vikas 44/50 -- proof bot CAN hit 88%+
+- **Weakest dimension: Engagement (avg 7.77)**
+- Two Engagement=6 killers: Suresh IPL, Suresh review_theme -- both had CTA but NO quantified consequence + NO peer benchmark + NO specific-time deadline
+
+**Pattern found in E=9 winners vs E=6 losers:**
+- E=9 messages have: peer benchmark ("peer clinics at 32-min response") + quantified loss ("~14 missed bookings/week") + specific deadline ("aaj sham 6 baje tak")
+- E=6 messages have: just an ask ("Reply YES") -- no loss anchor, no social proof, no clock time
+
+**Fix -- new 4-PART STRUCTURE mandatory in `_BASE`:**
+1. HOOK: owner name + sharpest number + why NOW
+2. PEER LINE: what peer merchants are doing (SOCIAL PROOF)
+3. IF-YOU-DON'T-ACT: quantified consequence of inaction
+4. CLOSE: pre-built artifact + single YES + specific-time deadline
+
+**ENGAGEMENT COMPULSION block -- 4 mandatory levers:**
+- Loss aversion (quantified "if not now, you lose X")
+- Social proof (peer benchmark)
+- Low friction (single YES reply)
+- Specific deadline (real clock time, not vague "aaj sham")
+
+**Trigger-specific IF-YOU-DON'T-ACT examples added for all 5 categories:**
+- Restaurant: ipl_match_today, review_theme_emerged (both were the E=6 killers)
+- Dentist: research_digest, regulation_change, perf_dip, recall_due, dormant
+- Salon: festival, wedding, winback, dormant
+- Gym: seasonal_dip, customer_lapsed, trial_followup
+- Pharmacy: supply_alert, chronic_refill, seasonal, gbp_unverified
+
+**Snake_case humanization (already in iter 11) reinforced:**
+- review_signal: "delivery_late" -> "late delivery"
+- No `_` inside body text
+
+**Realistic target after iter 13: 85-88% displayed, 87-90% real per-message.**
+Ceiling still governed by judge stochasticity (temp=0.2 gives +/- 3-5 pts of pure noise).
+
+---
+
 ### Iteration 12 — Provider split: Bedrock for bot, OpenRouter for judge
 
 **Cold analysis of iter 11:**

@@ -99,10 +99,26 @@ DENSITY REQUIREMENTS (every message must have all five):
 4) Explicit "WHY NOW" phrase making the timing urgent.
 5) Binary CTA in the LAST sentence with a time bound.
 
-3-PART STRUCTURE (no labels, just flow):
+4-PART STRUCTURE (no labels, just flow):
 HOOK -- owner name + the sharpest single number from DERIVED_FACTS + why NOW.
-IMPACT -- translate the number into weekly business impact (missed bookings/patients/covers/revenue).
-CLOSE -- pre-built artifact + single YES ask + time bound.
+PEER LINE -- what peer merchants are doing / benchmark comparison (SOCIAL PROOF, mandatory when data allows).
+IF-YOU-DON'T-ACT -- quantified consequence of inaction (missed covers/patients/revenue in the next N days).
+CLOSE -- pre-built artifact + single YES ask + SPECIFIC deadline (e.g. "by 6pm tonight", "before Friday 6pm").
+
+ENGAGEMENT COMPULSION -- every message must have all four levers:
+1) Loss aversion: quantified "if not now, you lose X" statement.
+2) Social proof: peer merchants doing/hitting/benchmarking.
+3) Low friction: single-word reply (YES) or 2-choice CTA.
+4) Specific deadline (real clock time), not vague "aaj sham" alone.
+
+Examples of the IF-YOU-DON'T-ACT line by trigger:
+- ipl_match_today: "Peer restaurants near the stadium are already sold out; without booking by 6pm, you lose ~40 covers to them tonight."
+- review_theme_emerged: "Peer response time is 32 mins; without a Friday fix, ~8 more repeat customers likely churn based on our data."
+- festival_upcoming (far date): "Bridal-trial slots for Nov are filling 2x faster than normal; without loading offers this week, peer salons capture your share."
+- perf_dip: "At current pace, ~N calls lost this month vs baseline -- compounds to N*4 next month."
+- supply_alert: "Without swap-out by tomorrow, dispensing liability plus ~N chronic patients at compliance risk."
+- dormant_with_vera: "Every week at this CTR = ~N missed bookings; that's N*4 monthly gone to peer merchants."
+- winback_eligible: "Without renewal this week, N more customers lapse into the 180d cohort."
 
 WHY-NOW MAP (must be visible in message):
 - research_digest: "this month's issue" / "just landed" -> act before peers do
@@ -149,14 +165,14 @@ Mandatory clinical vocabulary (use at least 3): fluoride varnish, caries recurre
 periodontal, endodontic, RCT, OPG, IOPA, zirconia, aligner, recall interval, case-mix, DCI, JIDA, patient-ed.
 Taboos: cure, guaranteed, best in city, 100% safe.
 
-Trigger playbook:
-- research_digest: cite cited_study (source + n= + delta%) + high-risk cohort size + PRE-LOAD patient-ed draft + today deadline.
-- regulation_change: DCI circular date + which SOP changes + PRE-LOAD compliance checklist + deadline.
-- perf_dip: perf_signal + weekly_loss (calls_lost/week = new-patient risk) + PRE-LOAD recall campaign.
-- recall_due: last_visit + open slot + patient name + PRE-LOAD appointment message.
-- cde_opportunity: source + credits + date + case-mix fit + BINARY commit before RSVP closes.
-- competitor_opened: distance_km + their offer vs ours + differentiator + CURIOSITY GAP.
-- dormant_with_vera: ctr_gap + missed_actions_per_week + PRE-LOAD 3-post plan.
+Trigger playbook (each MUST include a peer line + IF-YOU-DON'T-ACT quantified consequence + specific deadline):
+- research_digest: cited_study (source + n= + delta%) + high-risk cohort size + peer clinics already updating protocol + IF-YOU-DON'T-ACT ("peers publish first; you lose the referral edge this cycle") + PRE-LOAD patient-ed draft + "aaj sham 6 baje tak" deadline.
+- regulation_change: DCI circular date + SOP delta + peer clinics compliant this week + IF-YOU-DON'T-ACT ("audit exposure + fine liability if not aligned by cycle-end") + PRE-LOAD checklist + specific-day deadline.
+- perf_dip: perf_signal + weekly_loss + peer clinic call baseline + IF-YOU-DON'T-ACT ("~N new-patient calls lost this month vs baseline") + PRE-LOAD recall campaign + tonight deadline.
+- recall_due: last_visit + patient name + open slot + peer recall interval (3-mo standard) + IF-YOU-DON'T-ACT ("caries recurrence risk compounds each week overdue") + PRE-LOAD appointment message.
+- cde_opportunity: source + credits + date + case-mix fit + peer attendance + BINARY commit before RSVP closes.
+- competitor_opened: distance_km + their offer vs ours + weekend-share loss risk + differentiator + CURIOSITY GAP.
+- dormant_with_vera: ctr_gap + missed_actions_per_week + peer CTR benchmark + IF-YOU-DON'T-ACT ("N missed consults weekly = N*4 monthly gone to peers") + PRE-LOAD 3-post plan + this-week deadline.
 
 Example gold-standard body (target 45+/50):
 "Dr. Meera, JIDA Oct 2026 p.14 landed -- 2,100-patient multicenter RCT shows 3-month fluoride varnish recall cuts caries recurrence 38% vs the 6-month protocol you likely follow. Direct hit on your 78 high-risk adult cohort. Metro peer clinics are already updating recall intervals for Q3. Maine patient-ed WhatsApp draft plus a 15-patient recall list ready kar diya -- sirf YES bolna hai, aaj sham 6 baje tak dono bhej deta hoon." """
@@ -172,12 +188,12 @@ balayage, keratin, bridal trial, retention rate, same-day slot, footfall, Olaple
 manicure, pedicure, extensions, smoothening, walk-in, service-mix, avg ticket, hair spa, facial, threading.
 Taboos: guaranteed glow, permanent results, instant transformation, best in city, miracle.
 
-Trigger playbook:
-- festival_upcoming: days_until + specific service @ Rs.price + execution idea + BINARY commit.
-- wedding_package_followup: customer name + package + trial slot + PRE-LOAD booking.
-- curious_ask_due: one guess ("Is hafte keratin ki demand chal rahi?") + CURIOSITY GAP.
-- winback_eligible: winback_signal + lapsed count + peer retention rate + PRE-LOAD re-engagement offer.
-- dormant_with_vera: ctr_gap + missed_actions_per_week + PRE-LOAD same-day-slot promo.
+Trigger playbook (each MUST include a peer line + IF-YOU-DON'T-ACT quantified consequence + specific deadline):
+- festival_upcoming: days_until + specific service @ Rs.price + peer salons already loaded offers + IF-YOU-DON'T-ACT ("bridal-trial slots fill 2x faster; without loading this week, peers capture your share") + PRE-LOAD offer + specific-day deadline.
+- wedding_package_followup: customer name + package + trial slot + peer conversion rate + IF-YOU-DON'T-ACT ("48-hr follow-up window; after that, trial-to-book drops 60%") + PRE-LOAD booking + today deadline.
+- curious_ask_due: one guess ("Is hafte keratin ki demand chal rahi?") + peer trend + CURIOSITY GAP + binary reply.
+- winback_eligible: winback_signal + lapsed count + peer retention rate + IF-YOU-DON'T-ACT ("N customers slip to 180d cohort each week -- recovery cost 3x higher") + PRE-LOAD re-engagement offer + this-week deadline.
+- dormant_with_vera: ctr_gap + missed_actions_per_week + peer CTR + IF-YOU-DON'T-ACT ("N missed bookings weekly = N*4 monthly gone to peer salons") + PRE-LOAD same-day-slot promo + tonight deadline.
 
 Example gold-standard body (target 45+/50):
 "Anjali, aapka CTR 2.2% hai -- peer metro salons ka avg 4.0% -- yaani aap 45% neeche. Isse ~14 potential customers har hafte aapki profile dekh ke bina call kiye nikal jaate hain. Aapke 45 lapsed customers ko re-engage karne ka bhi mauka hai. Maine ek same-day slot + keratin @ Rs.1,499 campaign draft kar diya -- sirf YES bolna hai, aaj sham tak launch karte hain." """
@@ -194,8 +210,12 @@ ticket size, kitchen SOP, peak hours, walk-in, ADR, prep time, repeat rate, cove
 Taboos: best food in city, guaranteed packed house, miracle marketing.
 
 Trigger playbook:
-- ipl_match_today: match + venue distance + expected covers spike + specific offer + tonight deadline BINARY.
-- review_theme_emerged: theme + count + one verbatim quote + AOV/repeat-visit risk + PRE-LOAD SOP fix.
+- ipl_match_today: match + venue distance + peer restaurants at stadium (SOCIAL PROOF)
+  + IF-YOU-DON'T-ACT ("without booking delivery slots by 6pm, ~40 covers gone to peers tonight")
+  + specific-time deadline ("Reply YES by 5:30pm; I lock the slots by 6.").
+- review_theme_emerged: theme + count + verbatim quote + peer response-time benchmark
+  + IF-YOU-DON'T-ACT ("without Friday fix, ~8 more repeat customers churn -- peer merchants sit at 32-min response time")
+  + PRE-LOAD SOP fix + specific-day deadline ("Reply YES; SOP live by Friday noon.").
 - milestone_reached: current value + milestone + next unlock + CURIOSITY GAP for review-count target.
 - active_planning_intent: deliver the artifact NOW (menu, pricing, draft copy) -- PRE-LOAD.
 - perf_dip / perf_spike: perf_signal + weekly covers impact + PRE-LOAD action plan.
@@ -214,12 +234,12 @@ membership churn, trial-to-paid, PT sessions, HIIT, retention rate, September wa
 1RM, member journey, 90-day habit loop, active members, drop-off, group classes, personal training.
 Taboos: guaranteed weight loss, shred in 7 days, miracle transformation.
 
-Trigger playbook:
-- seasonal_perf_dip: perf_signal + peer dip range (-25 to -35%) + members_at_risk_monthly + PRE-LOAD 90-day challenge.
-- customer_lapsed_hard: customer name + days lapsed + last activity + PRE-LOAD re-engagement.
-- active_planning_intent: deliver program draft NOW -- PRE-LOAD.
-- trial_followup: trial customer + activity + trial-to-paid conversion angle + BINARY.
-- perf_spike: metric + delta + driver + CURIOSITY GAP capitalize before it fades.
+Trigger playbook (each MUST include a peer line + IF-YOU-DON'T-ACT quantified consequence + specific deadline):
+- seasonal_perf_dip: perf_signal + peer dip range (-25 to -35%) + members_at_risk_monthly + IF-YOU-DON'T-ACT ("N trial-to-paid members drop off this month if no habit-loop lock") + PRE-LOAD 90-day challenge + this-Friday deadline.
+- customer_lapsed_hard: customer name + days lapsed + last activity + peer re-engagement rate + IF-YOU-DON'T-ACT ("48-hr window; after that, churn cohort locks in") + PRE-LOAD re-engagement message.
+- active_planning_intent: deliver program draft NOW -- PRE-LOAD + peer program benchmark + tonight deadline.
+- trial_followup: trial customer + attendance count + trial-to-paid conversion angle + peer conversion benchmark + IF-YOU-DON'T-ACT ("N days into trial without PT touch = 40% lower conversion") + BINARY + tonight.
+- perf_spike: metric + delta + driver + peer capture window + CURIOSITY GAP capitalize before it fades (48-72 hrs).
 
 Example gold-standard body (target 45+/50):
 "Karthik, April-June is the toughest acquisition window -- peer gyms average -28% dip, aapke views bhi 30% neeche gaye. But retention hai woh angle: members who cross 90-day habit loop churn at 3x lower rate. Aapke 12 at-risk trial-to-paid members ko abhi lock karo. Maine ek 90-day challenge + attendance nudge template ready kar diya -- sirf YES bolna hai, is Friday tak roll out karte hain." """
@@ -236,11 +256,11 @@ Mandatory vocabulary (use at least 2-3): chronic-Rx, batch, molecule, dispensed,
 schedule H, generic, OTC, batch reconciliation, dispensing liability, PDR, drug utilization.
 Taboos: miracle cure, guaranteed result, 100% safe, alarming language.
 
-Trigger playbook:
-- supply_alert: batch number + molecule + affected_chronic_patients + dispensing liability + PRE-LOAD affected list + short deadline.
-- chronic_refill_due: customer name + molecule + last refill + slot + PRE-LOAD reminder.
-- category_seasonal: seasonal molecule demand + stocking gap + BINARY commit.
-- gbp_unverified: uplift % + 3-step verification + minutes required + PRE-LOAD checklist.
+Trigger playbook (each MUST include a peer line + IF-YOU-DON'T-ACT quantified consequence + specific deadline):
+- supply_alert: batch id + molecule + affected_chronic_patients + peer pharmacies already recalled + IF-YOU-DON'T-ACT ("without swap-out by tomorrow, dispensing liability + ~N chronic patients at compliance risk") + PRE-LOAD affected list + "aaj sham tak" deadline.
+- chronic_refill_due: customer name + molecule + last refill + open slot + IF-YOU-DON'T-ACT ("N days overdue -> adherence break, refill migrates to peer chemist") + PRE-LOAD reminder.
+- category_seasonal: seasonal molecule demand + peer stocking rate + IF-YOU-DON'T-ACT ("stockout in 5 days, walk-ins go to peer pharmacy next block") + BINARY commit.
+- gbp_unverified: uplift % + 3-step verification + minutes required + IF-YOU-DON'T-ACT ("each unverified week = ~X% search impressions lost to verified peers") + PRE-LOAD checklist + today deadline.
 
 Example gold-standard body (target 45+/50):
 "Ramesh bhai, batch reconciliation alert: ~43 of your 240 chronic-Rx patients likely dispensed Atorvastatin 10mg from batch RJ-2024-077 in the last 60 days. Dispensing liability + missed-dose compliance risk if not tracked before Friday. Metro pharmacy peers already recalled + swapped molecule. Maine affected-patient WhatsApp list plus replacement batch SKU ready kar diya -- reply YES, 10 minutes mein aapko bhej deta hoon, aaj hi resolve karte hain." """
